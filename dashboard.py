@@ -1,6 +1,6 @@
 """
 Streamlit Market Analytics Dashboard.
-Interactive visual business intelligence interface for real-time market KPIs, sector heatmaps, stock screening, and ETL execution.
+Interactive visual business intelligence interface for real-time market KPIs, sector performance, stock screening, and ETL execution.
 Run with: streamlit run dashboard.py
 """
 
@@ -16,17 +16,18 @@ from analytics.kpi_analysis import KPIAnalytics
 from analytics.market_analysis import MarketAnalytics
 from config.config import get_config
 from database.db_connection import get_db_manager
-from etl.extract import MarketExtractor
-from etl.load import MarketLoader
-from etl.transform import MarketTransformer
-from etl.validate import MarketValidator
-from reports.excel_report import ExcelReportGenerator
+from etl.extract import extract
+from etl.load import load_to_database
+from etl.transform import transform
+from etl.validate import validate, quarantine
+from reports.excel_report import generate_excel_report
+from reports.google_sheets import update_google_sheets
 
 # ---------------------------------------------------------
 # Streamlit Page Setup
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="Automated Market Data Scraper & Analytics Pipeline",
+    page_title="Market Analytics Dashboard",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -36,6 +37,11 @@ config = get_config()
 db = get_db_manager(config)
 market_analytics = MarketAnalytics(config, db)
 kpi_analytics = KPIAnalytics(config, db)
+
+
+def load_market_data() -> pd.DataFrame:
+    """Load latest market data directly from the relational database."""
+    return market_analytics.get_latest_market_data()
 
 
 # ---------------------------------------------------------
@@ -48,24 +54,21 @@ def run_pipeline_now():
         run_id = db.start_pipeline_run("Streamlit_UI")
         
         st.write("🌐 Step 2: Scraping multi-page market quotes & API endpoints...")
-        extractor = MarketExtractor(config)
-        raw_data = extractor.extract_all(total_pages=4, include_api=True)
+        raw_data = extract(pages=4, config=config)
         
         st.write("🧹 Step 3: Cleaning, normalizing, and casting data types...")
-        transformer = MarketTransformer(config)
-        transformed = transformer.transform_all(raw_data)
+        transformed = transform(raw_data, config=config)
         
         st.write("🛡️ Step 4: Enforcing Pydantic v2 schema constraints...")
-        validator = MarketValidator(config)
-        validated, errs = validator.validate_all(transformed)
+        validated, errs = validate(transformed, config=config)
+        quarantine(errs, config=config)
         
         st.write(f"💾 Step 5: Upserting validated records into {db.active_engine.upper()} database...")
-        loader = MarketLoader(config, db)
-        load_summary = loader.load_all(validated)
+        load_summary = load_to_database(validated, db=db, config=config)
         
-        st.write("📊 Step 6: Generating styled Excel workbook...")
-        excel_gen = ExcelReportGenerator(config)
-        report_path = excel_gen.generate_full_report()
+        st.write("📊 Step 6: Generating styled Excel workbook & updating reports...")
+        generate_excel_report(validated, config=config)
+        update_google_sheets(validated, config=config)
         
         db.finish_pipeline_run(
             run_id=run_id,
@@ -81,8 +84,7 @@ def run_pipeline_now():
 # Sidebar
 # ---------------------------------------------------------
 with st.sidebar:
-    st.image("https://img.icons8.com/fluency/96/bullish.png", width=64)
-    st.title("Market Pipeline")
+    st.title("📈 Market Pipeline")
     st.caption("Automated Data Engineering & Analytics")
     st.divider()
 
@@ -92,14 +94,14 @@ with st.sidebar:
 
     st.divider()
     st.subheader("🔍 Filters & Controls")
-    df_raw = market_analytics.get_latest_market_data()
+    df_raw = load_market_data()
     
     if not df_raw.empty:
         all_sectors = ["All Sectors"] + sorted(df_raw["sector"].dropna().unique().tolist())
         selected_sector = st.selectbox("Select Sector", all_sectors)
         
         min_pe = 0.0
-        max_pe = float(df_raw["pe_ratio"].max() if not df_raw["pe_ratio"].isna().all() else 100.0)
+        max_pe = float(df_raw["pe_ratio"].max() if "pe_ratio" in df_raw.columns and not df_raw["pe_ratio"].isna().all() else 100.0)
         selected_pe = st.slider("Max P/E Ratio", min_value=min_pe, max_value=max_pe, value=max_pe, step=5.0)
 
         search_query = st.text_input("Search Symbol or Company", "").strip().upper()
@@ -109,33 +111,34 @@ with st.sidebar:
         search_query = ""
 
     st.divider()
-    st.info(f"**Database Engine:** `{db.active_engine.upper()}`\n\n**Schema:** `Normalized Relational`")
+    st.info(f"**Database Engine:** `{db.active_engine.upper()}`\n\n**Architecture:** `3NF Relational Schema`")
 
 
 # ---------------------------------------------------------
 # Main Page Header & KPIs
 # ---------------------------------------------------------
-st.title("📊 Automated Market Data Scraper & Analytics Dashboard")
-st.markdown(
-    "*An end-to-end Python ETL pipeline extracting multi-page financial data, validating schema integrity, and loading into a relational database.*"
-)
+st.title("Market Analytics Dashboard")
 
 if df_raw.empty:
-    st.warning("⚠️ No market data found in the database. Click **'Run Pipeline Now'** in the sidebar to initialize and populate data.")
+    st.warning("⚠️ No market data found in the database. Click **'Run Pipeline Now'** in the sidebar to extract and populate data.")
     st.stop()
 
-# Compute Executive KPIs
+# Compute Breadth and Summary Metrics
+gainers_count = int((df_raw["change_percent"] > 0).sum())
+losers_count = int((df_raw["change_percent"] < 0).sum())
+avg_return = df_raw["change_percent"].mean()
+total_mcap = df_raw["market_cap"].sum() if "market_cap" in df_raw.columns else 0.0
 kpis = kpi_analytics.get_executive_summary_kpis(df_raw)
 breadth = market_analytics.calculate_market_breadth(df_raw)
+sector_df = market_analytics.calculate_sector_performance(df_raw)
 
-# Top KPI Metric Row
-k1, k2, k3, k4, k5, k6 = st.columns(6)
-k1.metric("Companies", f"{kpis['total_companies']}")
-k2.metric("Avg Daily Return", f"{kpis['avg_daily_return']:+.2f}%", delta=f"{kpis['avg_daily_return']:+.2f}%")
-k3.metric("Total Market Cap", f"₹{kpis['total_market_cap_cr']:,.0f} Cr")
-k4.metric("Avg P/E Ratio", f"{kpis['avg_pe_ratio']:.1f}")
-k5.metric("Top Gainer", f"{kpis['top_gainer_symbol']}", delta=f"{kpis['top_gainer_change']:+.2f}%")
-k6.metric("Top Loser", f"{kpis['top_loser_symbol']}", delta=f"{kpis['top_loser_change']:+.2f}%", delta_color="inverse")
+# 4 Key Metrics as requested
+col1, col2, col3, col4, col5 = st.columns(5)
+col1.metric("Companies", f"{len(df_raw)}")
+col2.metric("Average Return", f"{avg_return:+.2f}%", delta=f"{avg_return:+.2f}%")
+col3.metric("Gainers", f"{gainers_count}", delta=f"{gainers_count} Up")
+col4.metric("Losers", f"{losers_count}", delta=f"-{losers_count} Down", delta_color="inverse")
+col5.metric("Total Market Cap", f"₹{total_mcap:,.0f} Cr" if total_mcap > 0 else "N/A")
 
 st.divider()
 
@@ -143,14 +146,14 @@ st.divider()
 # Analytics Tabs
 # ---------------------------------------------------------
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "📈 Sector Analytics",
     "🏆 Top Gainers & Losers",
+    "📊 Sector Performance",
     "📋 Market Screener Table",
     "💡 Undervalued Picks",
     "⚙️ Pipeline Telemetry & Logs",
 ])
 
-# Filter working dataframe
+# Filtered DataFrame
 filtered_df = df_raw.copy()
 if selected_sector != "All Sectors":
     filtered_df = filtered_df[filtered_df["sector"] == selected_sector]
@@ -159,64 +162,17 @@ if search_query:
         filtered_df["symbol"].str.contains(search_query, case=False, na=False) |
         filtered_df["company_name"].str.contains(search_query, case=False, na=False)
     ]
-filtered_df = filtered_df[(filtered_df["pe_ratio"].isna()) | (filtered_df["pe_ratio"] <= selected_pe)]
+if "pe_ratio" in filtered_df.columns:
+    filtered_df = filtered_df[(filtered_df["pe_ratio"].isna()) | (filtered_df["pe_ratio"] <= selected_pe)]
 
 
-# --- TAB 1: Sector Analytics ---
+# --- TAB 1: Top Gainers & Losers ---
 with tab1:
-    st.subheader("Sector Performance & Breadth")
-    sector_df = market_analytics.calculate_sector_performance(df_raw)
-
-    col_chart, col_breadth = st.columns([2, 1])
-
-    with col_chart:
-        if not sector_df.empty:
-            chart = (
-                alt.Chart(sector_df)
-                .mark_bar(cornerRadiusTopLeft=6, cornerRadiusTopRight=6)
-                .encode(
-                    x=alt.X("sector:N", sort="-y", title="Sector"),
-                    y=alt.Y("avg_return_pct:Q", title="Average Return (%)"),
-                    color=alt.condition(
-                        alt.datum.avg_return_pct > 0,
-                        alt.value("#27AE60"),  # Green
-                        alt.value("#E74C3C"),  # Red
-                    ),
-                    tooltip=["sector", "avg_return_pct", "company_count", "total_market_cap_cr"],
-                )
-                .properties(height=340)
-            )
-            st.altair_chart(chart, use_container_width=True)
-
-    with col_breadth:
-        st.markdown("#### 🎯 Market Breadth")
-        b1, b2 = st.columns(2)
-        b1.metric("🟢 Advancing", f"{breadth['advancers']}")
-        b2.metric("🔴 Declining", f"{breadth['decliners']}")
-        st.metric("Market Sentiment", breadth["market_sentiment"], f"A/D Ratio: {breadth['ad_ratio']}")
-
-        st.markdown("#### 💰 Sector Market Cap Breakdown")
-        st.dataframe(
-            sector_df[["sector", "avg_return_pct", "total_market_cap_cr"]].rename(
-                columns={
-                    "sector": "Sector",
-                    "avg_return_pct": "Avg Return (%)",
-                    "total_market_cap_cr": "Market Cap (Cr ₹)",
-                }
-            ),
-            use_container_width=True,
-            hide_index=True,
-        )
-
-
-# --- TAB 2: Top Gainers & Losers ---
-with tab2:
-    st.subheader("Market Movers")
     g_col, l_col = st.columns(2)
 
     with g_col:
-        st.markdown("### 🟢 Top 5 Gainers")
-        top_gainers = kpi_analytics.get_top_gainers(5, df_raw)
+        st.subheader("🟢 Top Gainers")
+        top_gainers = kpi_analytics.get_top_gainers(10, df_raw)
         if not top_gainers.empty:
             st.dataframe(
                 top_gainers[["symbol", "company_name", "sector", "close_price", "change_percent", "volume"]].rename(
@@ -234,8 +190,8 @@ with tab2:
             )
 
     with l_col:
-        st.markdown("### 🔴 Top 5 Losers")
-        top_losers = kpi_analytics.get_top_losers(5, df_raw)
+        st.subheader("🔴 Top Losers")
+        top_losers = kpi_analytics.get_top_losers(10, df_raw)
         if not top_losers.empty:
             st.dataframe(
                 top_losers[["symbol", "company_name", "sector", "close_price", "change_percent", "volume"]].rename(
@@ -253,44 +209,71 @@ with tab2:
             )
 
 
+# --- TAB 2: Sector Performance ---
+with tab2:
+    st.subheader("Sector Performance & Breadth")
+    col_chart, col_stats = st.columns([2, 1])
+
+    with col_chart:
+        if not sector_df.empty:
+            chart = (
+                alt.Chart(sector_df)
+                .mark_bar(cornerRadiusTopLeft=6, cornerRadiusTopRight=6)
+                .encode(
+                    x=alt.X("sector:N", sort="-y", title="Sector"),
+                    y=alt.Y("avg_return_pct:Q", title="Average Return (%)"),
+                    color=alt.condition(
+                        alt.datum.avg_return_pct > 0,
+                        alt.value("#27AE60"),
+                        alt.value("#E74C3C"),
+                    ),
+                    tooltip=["sector", "avg_return_pct", "company_count", "total_market_cap_cr"],
+                )
+                .properties(height=340)
+            )
+            st.altair_chart(chart, use_container_width=True)
+
+    with col_stats:
+        st.markdown("#### 🎯 Market Breadth")
+        st.metric("A/D Ratio", f"{breadth['ad_ratio']}", f"{breadth['market_sentiment']}")
+        st.dataframe(
+            sector_df[["sector", "avg_return_pct", "company_count"]].rename(
+                columns={
+                    "sector": "Sector",
+                    "avg_return_pct": "Avg Return (%)",
+                    "company_count": "Stocks",
+                }
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+
 # --- TAB 3: Market Screener Table ---
 with tab3:
     st.subheader(f"Screened Equities ({len(filtered_df)} records)")
     
-    display_df = filtered_df[[
-        "symbol", "company_name", "sector", "industry", "close_price",
-        "previous_close", "change_percent", "volume", "market_cap", "pe_ratio", "eps"
-    ]].rename(
-        columns={
-            "symbol": "Symbol",
-            "company_name": "Company",
-            "sector": "Sector",
-            "industry": "Industry",
-            "close_price": "Price (₹)",
-            "previous_close": "Prev Close (₹)",
-            "change_percent": "Change %",
-            "volume": "Volume",
-            "market_cap": "M-Cap (Cr)",
-            "pe_ratio": "P/E",
-            "eps": "EPS",
-        }
-    )
-
+    cols_to_show = [c for c in ["symbol", "company_name", "sector", "industry", "close_price", "change_percent", "volume", "market_cap", "pe_ratio", "eps"] if c in filtered_df.columns]
+    
     st.dataframe(
-        display_df.style.format({
-            "Price (₹)": "₹{:,.2f}",
-            "Prev Close (₹)": "₹{:,.2f}",
-            "Change %": "{:+.2f}%",
-            "Volume": "{:,}",
-            "M-Cap (Cr)": "₹{:,.0f}",
-            "P/E": "{:.2f}",
-            "EPS": "{:.2f}",
-        }),
+        filtered_df[cols_to_show].rename(
+            columns={
+                "symbol": "Symbol",
+                "company_name": "Company",
+                "sector": "Sector",
+                "industry": "Industry",
+                "close_price": "Price (₹)",
+                "change_percent": "Change %",
+                "volume": "Volume",
+                "market_cap": "M-Cap (Cr)",
+                "pe_ratio": "P/E",
+                "eps": "EPS",
+            }
+        ),
         use_container_width=True,
         hide_index=True,
     )
 
-    # Download Excel Report button
     report_files = sorted(config.REPORTS_DIR.glob("*.xlsx"), key=os.path.getmtime, reverse=True)
     if report_files:
         with open(report_files[0], "rb") as f:
@@ -302,7 +285,7 @@ with tab3:
             )
 
 
-# --- TAB 4: Undervalued Value Picks ---
+# --- TAB 4: Undervalued Picks ---
 with tab4:
     st.subheader("💡 Undervalued & Profitable Equities")
     st.caption("Companies with positive net profit and low P/E valuation (P/E ≤ 25)")

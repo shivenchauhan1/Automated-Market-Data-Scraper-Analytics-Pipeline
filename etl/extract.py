@@ -11,9 +11,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from config.config import Config, get_config
-from scraper.stock_scraper import StockScraper
-from scraper.fundamentals_scraper import FundamentalsScraper
-from scraper.api_client import FinancialApiClient
+from scraper.stock_scraper import StockScraper, scrape_stocks
+from scraper.fundamentals_scraper import FundamentalsScraper, scrape_fundamentals
+from scraper.api_client import FinancialAPIClient
 
 logger = logging.getLogger("MarketPipeline.Extract")
 
@@ -25,7 +25,7 @@ class MarketExtractor:
         self.config = config or get_config()
         self.stock_scraper = StockScraper(self.config)
         self.fundamentals_scraper = FundamentalsScraper(self.config)
-        self.api_client = FinancialApiClient(self.config)
+        self.api_client = FinancialAPIClient(config=self.config)
 
     def extract_all(
         self,
@@ -59,6 +59,7 @@ class MarketExtractor:
                 "fundamentals_count": len(raw_fundamentals),
                 "api_quotes_count": len(raw_api_quotes),
             },
+            "market": raw_stocks,
             "stocks": raw_stocks,
             "fundamentals": raw_fundamentals,
             "api_quotes": raw_api_quotes,
@@ -66,7 +67,7 @@ class MarketExtractor:
 
         # 4. Save Raw Snapshot to Disk
         if save_raw_snapshot:
-            self._save_raw_snapshot(extracted_payload, start_time)
+            self.save_raw_data(extracted_payload, start_time)
 
         elapsed = (datetime.now() - start_time).total_seconds()
         logger.info(
@@ -79,14 +80,28 @@ class MarketExtractor:
 
         return extracted_payload
 
-    def _save_raw_snapshot(self, payload: Dict[str, Any], timestamp: datetime) -> Path:
+    def save_raw_data(self, payload: Dict[str, Any], timestamp: Optional[datetime] = None) -> Path:
         """Persist raw JSON snapshot to data/raw/."""
+        timestamp = timestamp or datetime.now()
         timestamp_str = timestamp.strftime("%Y%m%d_%H%M%S")
         filename = f"market_raw_{timestamp_str}.json"
         filepath = self.config.DATA_RAW_DIR / filename
+        filepath.parent.mkdir(parents=True, exist_ok=True)
 
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2, ensure_ascii=False)
 
         logger.info("Persisted raw data snapshot to: %s", filepath)
         return filepath
+
+
+def extract(pages: int = 4, config: Optional[Config] = None) -> Dict[str, Any]:
+    """Functional helper for extraction."""
+    extractor = MarketExtractor(config)
+    return extractor.extract_all(total_pages=pages)
+
+
+def save_raw_data(raw_data: Dict[str, Any], config: Optional[Config] = None) -> Path:
+    """Functional helper for raw data persistence."""
+    extractor = MarketExtractor(config)
+    return extractor.save_raw_data(raw_data)

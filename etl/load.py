@@ -44,13 +44,12 @@ class MarketLoader:
                 if is_sqlite:
                     cursor.execute(
                         """
-                        INSERT INTO companies (symbol, company_name, sector, industry, updated_at)
-                        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                        INSERT INTO companies (symbol, company_name, sector, industry)
+                        VALUES (?, ?, ?, ?)
                         ON CONFLICT(symbol) DO UPDATE SET
                             company_name=excluded.company_name,
                             sector=excluded.sector,
-                            industry=excluded.industry,
-                            updated_at=CURRENT_TIMESTAMP
+                            industry=excluded.industry
                         """,
                         (symbol, name, sector, industry),
                     )
@@ -62,22 +61,17 @@ class MarketLoader:
                         ON DUPLICATE KEY UPDATE
                             company_name=VALUES(company_name),
                             sector=VALUES(sector),
-                            industry=VALUES(industry),
-                            updated_at=CURRENT_TIMESTAMP
+                            industry=VALUES(industry)
                         """,
                         (symbol, name, sector, industry),
                     )
 
             conn.commit()
 
-            # Retrieve all company mappings
             cursor.execute("SELECT company_id, symbol FROM companies")
             rows = cursor.fetchall()
             for r in rows:
-                if is_sqlite:
-                    symbol_to_id[r["symbol"]] = r["company_id"]
-                else:
-                    symbol_to_id[r["symbol"]] = r["company_id"]
+                symbol_to_id[r["symbol"]] = r["company_id"]
 
         logger.info("Loaded/Upserted %d companies into master table.", len(df_companies))
         return symbol_to_id
@@ -103,8 +97,7 @@ class MarketLoader:
                 open_p = row.get("open_price")
                 high_p = row.get("high_price")
                 low_p = row.get("low_price")
-                close_p = row["close_price"]
-                prev_p = row.get("previous_close")
+                close_p = row.get("close_price")
                 chg_pct = row.get("change_percent")
                 vol = row.get("volume")
 
@@ -113,36 +106,34 @@ class MarketLoader:
                         """
                         INSERT INTO stock_prices (
                             company_id, price_date, open_price, high_price, low_price,
-                            close_price, previous_close, change_percent, volume
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            close_price, change_percent, volume
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT(company_id, price_date) DO UPDATE SET
                             open_price=excluded.open_price,
                             high_price=excluded.high_price,
                             low_price=excluded.low_price,
                             close_price=excluded.close_price,
-                            previous_close=excluded.previous_close,
                             change_percent=excluded.change_percent,
                             volume=excluded.volume
                         """,
-                        (company_id, price_date, open_p, high_p, low_p, close_p, prev_p, chg_pct, vol),
+                        (company_id, price_date, open_p, high_p, low_p, close_p, chg_pct, vol),
                     )
                 else:
                     cursor.execute(
                         """
                         INSERT INTO stock_prices (
                             company_id, price_date, open_price, high_price, low_price,
-                            close_price, previous_close, change_percent, volume
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            close_price, change_percent, volume
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                         ON DUPLICATE KEY UPDATE
                             open_price=VALUES(open_price),
                             high_price=VALUES(high_price),
                             low_price=VALUES(low_price),
                             close_price=VALUES(close_price),
-                            previous_close=VALUES(previous_close),
                             change_percent=VALUES(change_percent),
                             volume=VALUES(volume)
                         """,
-                        (company_id, price_date, open_p, high_p, low_p, close_p, prev_p, chg_pct, vol),
+                        (company_id, price_date, open_p, high_p, low_p, close_p, chg_pct, vol),
                     )
                 inserted_count += 1
 
@@ -168,53 +159,47 @@ class MarketLoader:
                 if not company_id:
                     continue
 
-                rec_date = row["recorded_date"]
                 mcap = row.get("market_cap")
                 pe = row.get("pe_ratio")
                 eps = row.get("eps")
-                w52_h = row.get("week_52_high")
-                w52_l = row.get("week_52_low")
                 rev = row.get("revenue")
                 prof = row.get("profit")
                 debt = row.get("debt")
+                upd_at = row.get("updated_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
                 if is_sqlite:
                     cursor.execute(
                         """
                         INSERT INTO fundamentals (
-                            company_id, recorded_date, market_cap, pe_ratio, eps,
-                            week_52_high, week_52_low, revenue, profit, debt
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(company_id, recorded_date) DO UPDATE SET
+                            company_id, market_cap, pe_ratio, eps,
+                            revenue, profit, debt, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(company_id, updated_at) DO UPDATE SET
                             market_cap=excluded.market_cap,
                             pe_ratio=excluded.pe_ratio,
                             eps=excluded.eps,
-                            week_52_high=excluded.week_52_high,
-                            week_52_low=excluded.week_52_low,
                             revenue=excluded.revenue,
                             profit=excluded.profit,
                             debt=excluded.debt
                         """,
-                        (company_id, rec_date, mcap, pe, eps, w52_h, w52_l, rev, prof, debt),
+                        (company_id, mcap, pe, eps, rev, prof, debt, upd_at),
                     )
                 else:
                     cursor.execute(
                         """
                         INSERT INTO fundamentals (
-                            company_id, recorded_date, market_cap, pe_ratio, eps,
-                            week_52_high, week_52_low, revenue, profit, debt
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            company_id, market_cap, pe_ratio, eps,
+                            revenue, profit, debt, updated_at
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                         ON DUPLICATE KEY UPDATE
                             market_cap=VALUES(market_cap),
                             pe_ratio=VALUES(pe_ratio),
                             eps=VALUES(eps),
-                            week_52_high=VALUES(week_52_high),
-                            week_52_low=VALUES(week_52_low),
                             revenue=VALUES(revenue),
                             profit=VALUES(profit),
                             debt=VALUES(debt)
                         """,
-                        (company_id, rec_date, mcap, pe, eps, w52_h, w52_l, rev, prof, debt),
+                        (company_id, mcap, pe, eps, rev, prof, debt, upd_at),
                     )
                 inserted_count += 1
 
@@ -232,9 +217,8 @@ class MarketLoader:
         df_p = validated_data["prices"].copy()
         df_f = validated_data["fundamentals"].copy()
 
-        # Merge on symbol
         if not df_f.empty:
-            merged = pd.merge(df_p, df_f.drop(columns=["recorded_date"], errors="ignore"), on="symbol", how="left")
+            merged = pd.merge(df_p, df_f.drop(columns=["updated_at"], errors="ignore"), on="symbol", how="left")
         else:
             merged = df_p
 
@@ -266,3 +250,9 @@ class MarketLoader:
             "fundamentals": fund_records,
             "total_records": total_records,
         }
+
+
+def load_to_database(valid_data: Dict[str, pd.DataFrame], db: Optional[DatabaseManager] = None, config: Optional[Config] = None) -> Dict[str, int]:
+    """Functional helper for database loading."""
+    loader = MarketLoader(config, db)
+    return loader.load_all(valid_data)

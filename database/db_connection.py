@@ -1,9 +1,11 @@
 """
-Database Connection and ORM/Query Manager.
-Supports MySQL and SQLite with automatic fallback, connection pooling, schema initialization, and transactional upserts.
+Database Connection and ORM Manager.
+Supports MySQL as the primary database with SQLite development fallback.
+Provides cursor, commit, close methods, connection context managers, schema initialization, and query helpers.
 """
 
 import logging
+import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
@@ -15,7 +17,7 @@ from config.config import Config, get_config
 
 logger = logging.getLogger("MarketPipeline.Database")
 
-# Optional PyMySQL import
+# MySQL connector import (pymysql / mysql.connector fallback)
 try:
     import pymysql
     from pymysql.cursors import DictCursor
@@ -24,15 +26,29 @@ except ImportError:
     PYMYSQL_AVAILABLE = False
     DictCursor = None
 
+try:
+    import mysql.connector
+    MYSQL_CONNECTOR_AVAILABLE = True
+except ImportError:
+    MYSQL_CONNECTOR_AVAILABLE = False
+
 
 class DatabaseManager:
-    """Manages database connections, schema migrations, and queries for MySQL & SQLite."""
+    """Manages database connectivity, schema creation, and transactional execution."""
 
     def __init__(self, config: Optional[Config] = None):
         self.config = config or get_config()
-        self.db_type = self.config.DB_TYPE.lower()
-        self._active_db_type = self.db_type
         self.sqlite_path = self.config.SQLITE_DB_PATH
+        
+        # Check explicit USE_SQLITE environment variable
+        env_sqlite = os.getenv("USE_SQLITE")
+        if env_sqlite is not None:
+            self.use_sqlite = env_sqlite.strip().lower() in ("true", "1", "yes")
+        else:
+            self.use_sqlite = (self.config.DB_TYPE.lower() == "sqlite")
+
+        self._active_db_type = "sqlite" if self.use_sqlite else "mysql"
+        self._connection = None
         self.init_schema()
 
     def _get_sqlite_connection(self) -> sqlite3.Connection:
@@ -44,27 +60,46 @@ class DatabaseManager:
         return conn
 
     def _get_mysql_connection(self):
-        """Create MySQL connection using PyMySQL."""
-        if not PYMYSQL_AVAILABLE:
-            raise RuntimeError("PyMySQL is not installed.")
-        
-        return pymysql.connect(
-            host=self.config.DB_HOST,
-            port=self.config.DB_PORT,
-            user=self.config.DB_USER,
-            password=self.config.DB_PASSWORD,
-            database=self.config.DB_NAME,
-            charset="utf8mb4",
-            cursorclass=DictCursor,
-            autocommit=False,
-            connect_timeout=5,
-        )
+        """Create MySQL connection using PyMySQL or mysql.connector."""
+        host = os.getenv("MYSQL_HOST", self.config.DB_HOST)
+        port = int(os.getenv("MYSQL_PORT", self.config.DB_PORT))
+        user = os.getenv("MYSQL_USER", self.config.DB_USER)
+        password = os.getenv("MYSQL_PASSWORD", self.config.DB_PASSWORD)
+        database = os.getenv("MYSQL_DATABASE", self.config.DB_NAME)
+
+        if PYMYSQL_AVAILABLE:
+            return pymysql.connect(
+                host=host,
+                port=port,
+                user=user,
+                password=password,
+                database=database,
+                charset="utf8mb4",
+                cursorclass=DictCursor,
+                autocommit=False,
+                connect_timeout=5,
+            )
+        elif MYSQL_CONNECTOR_AVAILABLE:
+            return mysql.connector.connect(
+                host=host,
+                port=port,
+                user=user,
+                password=password,
+                database=database,
+            )
+        else:
+            raise RuntimeError("Neither pymysql nor mysql.connector is installed.")
+
+    @property
+    def active_engine(self) -> str:
+        """Return the active database engine name ('mysql' or 'sqlite')."""
+        return self._active_db_type
 
     @contextmanager
     def get_connection(self) -> Generator[Any, None, None]:
-        """Context manager for acquiring and closing database connections."""
+        """Context manager for acquiring and safely releasing database connections."""
         conn = None
-        use_sqlite = (self._active_db_type == "sqlite")
+        use_sqlite = self.use_sqlite
 
         if not use_sqlite:
             try:
@@ -75,6 +110,7 @@ class DatabaseManager:
                     e,
                     self.sqlite_path,
                 )
+                self.use_sqlite = True
                 self._active_db_type = "sqlite"
                 use_sqlite = True
 
@@ -90,14 +126,35 @@ class DatabaseManager:
                 except Exception:
                     pass
 
-    @property
-    def active_engine(self) -> str:
-        """Return the active database engine name ('mysql' or 'sqlite')."""
-        return self._active_db_type
+    # Standard direct methods matching user specifications
+    def cursor(self):
+        """Create a new cursor on an active connection."""
+        if self._connection is None:
+            if self.use_sqlite:
+                self._connection = self._get_sqlite_connection()
+            else:
+                try:
+                    self._connection = self._get_mysql_connection()
+                except Exception:
+                    self.use_sqlite = True
+                    self._active_db_type = "sqlite"
+                    self._connection = self._get_sqlite_connection()
+        return self._connection.cursor()
+
+    def commit(self):
+        """Commit active connection transaction."""
+        if self._connection:
+            self._connection.commit()
+
+    def close(self):
+        """Close active connection."""
+        if self._connection:
+            self._connection.close()
+            self._connection = None
 
     def init_schema(self) -> None:
         """Initialize database tables, constraints, and indexes."""
-        logger.info("Verifying database schema using engine: %s", self._active_db_type)
+        logger.info("Initializing database schema (Engine: %s)...", self._active_db_type)
         
         sqlite_ddl = """
         CREATE TABLE IF NOT EXISTS companies (
@@ -105,9 +162,7 @@ class DatabaseManager:
             symbol TEXT NOT NULL UNIQUE,
             company_name TEXT NOT NULL,
             sector TEXT,
-            industry TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            industry TEXT
         );
 
         CREATE TABLE IF NOT EXISTS stock_prices (
@@ -117,11 +172,9 @@ class DatabaseManager:
             open_price REAL,
             high_price REAL,
             low_price REAL,
-            close_price REAL NOT NULL,
-            previous_close REAL,
+            close_price REAL,
             change_percent REAL,
             volume INTEGER,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (company_id) REFERENCES companies(company_id) ON DELETE CASCADE,
             UNIQUE(company_id, price_date)
         );
@@ -132,30 +185,26 @@ class DatabaseManager:
             market_cap REAL,
             pe_ratio REAL,
             eps REAL,
-            week_52_high REAL,
-            week_52_low REAL,
             revenue REAL,
             profit REAL,
             debt REAL,
-            recorded_date TEXT NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (company_id) REFERENCES companies(company_id) ON DELETE CASCADE,
-            UNIQUE(company_id, recorded_date)
+            UNIQUE(company_id, updated_at)
         );
 
         CREATE TABLE IF NOT EXISTS scraper_runs (
             run_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            source TEXT NOT NULL,
-            start_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+            source TEXT,
+            start_time DATETIME,
             end_time DATETIME,
             records_extracted INTEGER DEFAULT 0,
             records_loaded INTEGER DEFAULT 0,
-            status TEXT NOT NULL,
+            status TEXT,
             error_message TEXT
         );
 
-        CREATE INDEX IF NOT EXISTS idx_stock_prices_date ON stock_prices (price_date);
-        CREATE INDEX IF NOT EXISTS idx_stock_prices_company ON stock_prices (company_id, price_date);
+        CREATE INDEX IF NOT EXISTS idx_prices_date ON stock_prices (price_date);
         CREATE INDEX IF NOT EXISTS idx_companies_symbol ON companies (symbol);
         CREATE INDEX IF NOT EXISTS idx_companies_sector ON companies (sector);
         """
@@ -163,14 +212,10 @@ class DatabaseManager:
         mysql_ddl = """
         CREATE TABLE IF NOT EXISTS companies (
             company_id INT AUTO_INCREMENT PRIMARY KEY,
-            symbol VARCHAR(20) NOT NULL UNIQUE,
+            symbol VARCHAR(20) UNIQUE NOT NULL,
             company_name VARCHAR(150) NOT NULL,
             sector VARCHAR(100),
-            industry VARCHAR(100),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            INDEX idx_symbol (symbol),
-            INDEX idx_sector (sector)
+            industry VARCHAR(100)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
         CREATE TABLE IF NOT EXISTS stock_prices (
@@ -180,42 +225,35 @@ class DatabaseManager:
             open_price DECIMAL(15,2),
             high_price DECIMAL(15,2),
             low_price DECIMAL(15,2),
-            close_price DECIMAL(15,2) NOT NULL,
-            previous_close DECIMAL(15,2),
+            close_price DECIMAL(15,2),
             change_percent DECIMAL(8,4),
             volume BIGINT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (company_id) REFERENCES companies(company_id) ON DELETE CASCADE,
-            UNIQUE KEY uq_company_date (company_id, price_date),
-            INDEX idx_price_date (price_date)
+            UNIQUE KEY unique_price (company_id, price_date)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
         CREATE TABLE IF NOT EXISTS fundamentals (
-            fundamental_id INT AUTO_INCREMENT PRIMARY KEY,
+            fundamental_id BIGINT AUTO_INCREMENT PRIMARY KEY,
             company_id INT NOT NULL,
             market_cap DECIMAL(20,2),
             pe_ratio DECIMAL(10,2),
-            eps DECIMAL(10,2),
-            week_52_high DECIMAL(15,2),
-            week_52_low DECIMAL(15,2),
+            eps DECIMAL(15,2),
             revenue DECIMAL(20,2),
             profit DECIMAL(20,2),
             debt DECIMAL(20,2),
-            recorded_date DATE NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (company_id) REFERENCES companies(company_id) ON DELETE CASCADE,
-            UNIQUE KEY uq_company_fund_date (company_id, recorded_date),
-            INDEX idx_fund_date (recorded_date)
+            UNIQUE KEY unique_fundamental (company_id, updated_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
         CREATE TABLE IF NOT EXISTS scraper_runs (
-            run_id INT AUTO_INCREMENT PRIMARY KEY,
-            source VARCHAR(100) NOT NULL,
-            start_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            end_time TIMESTAMP NULL,
+            run_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            source VARCHAR(100),
+            start_time DATETIME,
+            end_time DATETIME,
             records_extracted INT DEFAULT 0,
             records_loaded INT DEFAULT 0,
-            status VARCHAR(50) NOT NULL,
+            status VARCHAR(30),
             error_message TEXT
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         """
@@ -250,7 +288,6 @@ class DatabaseManager:
             conn.commit()
             return cursor.rowcount
 
-    # --- Telemetry: scraper_runs helpers ---
     def start_pipeline_run(self, source: str) -> int:
         """Record the start of a pipeline/scraper run and return run_id."""
         with self.get_connection() as conn:

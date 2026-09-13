@@ -19,9 +19,11 @@ config/service_account.json
 data/*.db
 data/raw/*.json
 data/processed/*.csv
+data/quarantine/*.json
 reports/output/*.xlsx
 !data/raw/.gitkeep
 !data/processed/.gitkeep
+!data/quarantine/.gitkeep
 !reports/output/.gitkeep
 
 # Logs

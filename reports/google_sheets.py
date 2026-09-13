@@ -43,15 +43,22 @@ class GoogleSheetsSync:
         """Check if service account JSON credentials exist."""
         return GSPREAD_AVAILABLE and self.creds_path.exists()
 
-    def sync_dashboard(self) -> bool:
+    def sync_dashboard(self, analytics: Optional[Dict[str, Any]] = None) -> bool:
         """Sync latest market KPIs, top gainers, and sector analysis to Google Sheets."""
         logger.info("================== [PHASE 6: GOOGLE SHEETS SYNC] ==================")
         
-        df_market = self.market_analytics.get_latest_market_data()
-        df_sector = self.market_analytics.calculate_sector_performance(df_market)
-        kpis = self.kpi_analytics.get_executive_summary_kpis(df_market)
-        breadth = self.market_analytics.calculate_market_breadth(df_market)
-        top_gainers = self.kpi_analytics.get_top_gainers(5, df_market)
+        if analytics:
+            df_market = analytics.get("market_df", self.market_analytics.get_latest_market_data())
+            df_sector = analytics.get("sector_performance", self.market_analytics.calculate_sector_performance(df_market))
+            kpis = analytics.get("kpis", self.kpi_analytics.get_executive_summary_kpis(df_market))
+            breadth = analytics.get("breadth", self.market_analytics.calculate_market_breadth(df_market))
+            top_gainers = analytics.get("top_gainers", self.kpi_analytics.get_top_gainers(5, df_market))
+        else:
+            df_market = self.market_analytics.get_latest_market_data()
+            df_sector = self.market_analytics.calculate_sector_performance(df_market)
+            kpis = self.kpi_analytics.get_executive_summary_kpis(df_market)
+            breadth = self.market_analytics.calculate_market_breadth(df_market)
+            top_gainers = self.kpi_analytics.get_top_gainers(5, df_market)
 
         if not self.is_configured():
             logger.info("Google Service Account credentials not found at %s.", self.creds_path)
@@ -69,7 +76,6 @@ class GoogleSheetsSync:
                 logger.info("Spreadsheet '%s' not found. Creating new spreadsheet...", self.sheet_name)
                 sheet = client.create(self.sheet_name)
 
-            # Update KPI worksheet
             ws = sheet.get_worksheet(0) or sheet.sheet1
             ws.update_title("Market Summary")
             
@@ -79,7 +85,7 @@ class GoogleSheetsSync:
                 ["", ""],
                 ["Total Companies Tracked", kpis["total_companies"]],
                 ["Average Daily Return", f"{kpis['avg_daily_return']:+.2f}%"],
-                ["Total Market Cap (Cr)", f"₹{kpis['total_market_cap_cr']:,.2f}"],
+                ["Total Market Cap (Cr)", f"INR {kpis['total_market_cap_cr']:,.2f}"],
                 ["Market Breadth", f"{breadth['ad_ratio']} ({breadth['market_sentiment']})"],
                 ["Top Gainer", f"{kpis['top_gainer_symbol']} ({kpis['top_gainer_change']:+.2f}%)"],
                 ["Top Loser", f"{kpis['top_loser_symbol']} ({kpis['top_loser_change']:+.2f}%)"],
@@ -103,3 +109,9 @@ class GoogleSheetsSync:
         logger.info("  -> Top Loser: %s (%+.2f%%)", kpis["top_loser_symbol"], kpis["top_loser_change"])
         logger.info("  -> Sectors Synced: %d", len(df_sector))
         logger.info("[GoogleSheets-Sync] Dry-run update completed successfully.")
+
+
+def update_google_sheets(valid_data: Optional[Any] = None, analytics: Optional[Any] = None, config: Optional[Config] = None) -> bool:
+    """Functional helper for Google Sheets sync."""
+    syncer = GoogleSheetsSync(config)
+    return syncer.sync_dashboard(analytics)

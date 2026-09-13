@@ -12,6 +12,7 @@ import logging
 import sys
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 # Ensure UTF-8 output on Windows consoles
@@ -26,18 +27,15 @@ if hasattr(sys.stderr, "reconfigure"):
     except Exception:
         pass
 
-from tabulate import tabulate
-
-from analytics.kpi_analysis import KPIAnalytics
-from analytics.market_analysis import MarketAnalytics
 from config.config import Config, get_config
 from database.db_connection import DatabaseManager, get_db_manager
-from etl.extract import MarketExtractor
-from etl.load import MarketLoader
-from etl.transform import MarketTransformer
-from etl.validate import MarketValidator
-from reports.excel_report import ExcelReportGenerator
-from reports.google_sheets import GoogleSheetsSync
+from etl.extract import extract, save_raw_data
+from etl.transform import transform
+from etl.validate import validate, quarantine
+from etl.load import load_to_database
+from analytics.market_analysis import run_analysis
+from reports.excel_report import generate_excel_report
+from reports.google_sheets import update_google_sheets
 
 
 def setup_logging(config: Config) -> logging.Logger:
@@ -55,11 +53,9 @@ def setup_logging(config: Config) -> logging.Logger:
     file_handler.setFormatter(file_formatter)
     logger.addHandler(file_handler)
 
-    # Console Handler (StreamHandler with errors='replace')
+    # Console Handler
     console_handler = logging.StreamHandler(sys.stdout)
-    console_formatter = logging.Formatter(
-        "[%(levelname)-7s] %(message)s"
-    )
+    console_formatter = logging.Formatter("[%(levelname)-7s] %(message)s")
     console_handler.setFormatter(console_formatter)
     logger.addHandler(console_handler)
 
@@ -77,92 +73,88 @@ def run_pipeline(
     config = get_config()
     logger = setup_logging(config)
 
-    start_time = time.time()
-    logger.info("================================================================")
-    logger.info("🚀 AUTOMATED MARKET DATA SCRAPER & ANALYTICS PIPELINE")
-    logger.info("================================================================")
-    logger.info("Execution initiated at: %s", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    print("\n==================================================")
+    print("       AUTOMATED MARKET DATA PIPELINE")
+    print("==================================================")
 
     db = get_db_manager(config)
     run_id = db.start_pipeline_run(source="CLI_Main_Pipeline")
+    start_time = time.time()
 
     try:
-        # 1. EXTRACT
-        logger.info("[1/6] Extracting market data across %d pages & REST API...", pages)
-        extractor = MarketExtractor(config)
-        raw_payload = extractor.extract_all(total_pages=pages, include_api=include_api)
-        records_extracted = len(raw_payload.get("stocks", []))
-        logger.info("[INFO] %d raw stock records extracted.", records_extracted)
+        # [1/7] Extract Data
+        print("\n[1/7] Extracting market data...")
+        raw_data = extract(pages=pages, config=config)
+        save_raw_data(raw_data, config=config)
+        extracted_count = len(raw_data.get("stocks", []))
+        print(f"      ✓ {extracted_count} records extracted")
 
-        # 2. TRANSFORM
-        logger.info("[2/6] Cleaning, normalizing, and casting data types...")
-        transformer = MarketTransformer(config)
-        transformed_data = transformer.transform_all(raw_payload)
+        # [2/7] Transform Data
+        print("\n[2/7] Transforming data...")
+        transformed_data = transform(raw_data, config=config)
+        print("      ✓ Currency normalized")
+        print("      ✓ Percentages normalized")
 
-        # 3. VALIDATE
-        logger.info("[3/6] Enforcing Pydantic v2 schema constraints...")
-        validator = MarketValidator(config)
-        validated_data, quarantine_errors = validator.validate_all(transformed_data)
-        logger.info("[INFO] Validation successful: 0 fatal schema violations.")
+        # [3/7] Validate Schema & Quarantine
+        print("\n[3/7] Validating schema...")
+        valid_data, invalid_data = validate(transformed_data, config=config)
+        quarantine_path = quarantine(invalid_data, config=config)
+        
+        valid_count = len(valid_data["prices"])
+        quarantined_count = sum(len(errs) for errs in invalid_data.values())
+        print(f"      ✓ {valid_count} valid")
+        if quarantined_count > 0:
+            print(f"      ⚠ {quarantined_count} quarantined ({quarantine_path})")
+        else:
+            print("      ⚠ 0 quarantined")
 
         if dry_run:
-            logger.info("[DRY-RUN] Skipping database insert and external syncs.")
+            print("\n[DRY-RUN] Skipping database insert and report generation.")
             return True
 
-        # 4. LOAD
-        logger.info("[4/6] Loading into %s relational database...", db.active_engine.upper())
-        loader = MarketLoader(config, db)
-        load_stats = loader.load_all(validated_data)
-        logger.info("[INFO] %d records loaded into database successfully.", load_stats["total_records"])
+        # [4/7] Load Relational Database
+        print(f"\n[4/7] Loading {db.active_engine.upper()} database...")
+        load_summary = load_to_database(valid_data, db=db, config=config)
+        print("      ✓ Companies upserted")
+        print("      ✓ Prices loaded")
+        print("      ✓ Fundamentals loaded")
 
-        # 5. ANALYZE & EXCEL REPORTING
+        # [5/7] Run Analytics
+        print("\n[5/7] Running analytics...")
+        analytics = run_analysis(df=None, db=db, config=config)
+        print("      ✓ Market breadth calculated")
+        print("      ✓ Sector returns calculated")
+        print("      ✓ Top gainers/losers calculated")
+
+        # [6/7] Generating Reports
+        print("\n[6/7] Generating reports...")
         if export_excel:
-            logger.info("[5/6] Generating multi-sheet Excel KPI report...")
-            excel_gen = ExcelReportGenerator(config)
-            report_path = excel_gen.generate_full_report()
-            logger.info("[INFO] Excel report generated: %s", report_path.name)
-
-        # 6. GOOGLE SHEETS SYNC
+            report_path = generate_excel_report(valid_data, analytics=analytics, config=config)
+            print(f"      ✓ Excel report generated ({report_path.name})")
         if sync_sheets:
-            logger.info("[6/6] Synchronizing KPI dashboard to Google Sheets...")
-            sheets_sync = GoogleSheetsSync(config)
-            sheets_sync.sync_dashboard()
-            logger.info("[INFO] Google Sheets sync completed.")
-
-        # Analytics Executive Banner
-        kpi_analytics = KPIAnalytics(config, db)
-        market_analytics = MarketAnalytics(config, db)
-        kpis = kpi_analytics.get_executive_summary_kpis()
-        breadth = market_analytics.calculate_market_breadth()
+            update_google_sheets(valid_data, analytics=analytics, config=config)
+            print("      ✓ Google Sheets updated")
 
         elapsed = time.time() - start_time
         db.finish_pipeline_run(
             run_id=run_id,
-            records_extracted=records_extracted,
-            records_loaded=load_stats["total_records"],
+            records_extracted=extracted_count,
+            records_loaded=load_summary["total_records"],
             status="SUCCESS",
         )
 
-        logger.info("================================================================")
-        logger.info("[SUMMARY] EXECUTIVE MARKET SUMMARY")
-        logger.info("================================================================")
-        summary_table = [
-            ["Tracked Companies", str(kpis["total_companies"])],
-            ["Average Daily Return", f"{kpis['avg_daily_return']:+.2f}%"],
-            ["Total Market Cap", f"INR {kpis['total_market_cap_cr']:,.2f} Cr"],
-            ["Market Breadth", f"{breadth['ad_ratio']} ({breadth['market_sentiment']})"],
-            ["Top Gainer", f"{kpis['top_gainer_symbol']} ({kpis['top_gainer_change']:+.2f}%)"],
-            ["Top Loser", f"{kpis['top_loser_symbol']} ({kpis['top_loser_change']:+.2f}%)"],
-            ["Execution Duration", f"{elapsed:.2f} seconds"],
-            ["Database Engine", db.active_engine.upper()],
-        ]
-        print("\n" + tabulate(summary_table, headers=["KPI Metric", "Value"], tablefmt="grid") + "\n")
+        # [7/7] Pipeline Complete Summary Banner
+        print("\n[7/7] Pipeline complete\n")
+        print(f"Records processed: {extracted_count}")
+        print(f"Records loaded:    {load_summary['total_records']}")
+        print(f"Records rejected:  {quarantined_count}")
+        print(f"Execution time:    {elapsed:.2f}s")
+        print("==================================================\n")
 
-        logger.info("Pipeline completed successfully in %.2f seconds.", elapsed)
         return True
 
     except Exception as exc:
-        logger.exception("❌ Pipeline encountered an unhandled exception: %s", exc)
+        logger.exception("❌ Pipeline execution failed: %s", exc)
         db.finish_pipeline_run(
             run_id=run_id,
             records_extracted=0,
@@ -174,7 +166,7 @@ def run_pipeline(
 
 
 def main():
-    """Parse arguments and start execution."""
+    """Parse arguments and start pipeline."""
     parser = argparse.ArgumentParser(
         description="Automated Market Data Scraper & Analytics Pipeline"
     )

@@ -34,14 +34,11 @@ class MarketAnalytics:
             p.high_price,
             p.low_price,
             p.close_price,
-            p.previous_close,
             p.change_percent,
             p.volume,
             f.market_cap,
             f.pe_ratio,
             f.eps,
-            f.week_52_high,
-            f.week_52_low,
             f.revenue,
             f.profit,
             f.debt
@@ -100,7 +97,7 @@ class MarketAnalytics:
         decliners = int((df["change_percent"] < 0).sum())
         unchanged = int((df["change_percent"] == 0).sum())
         total = len(df)
-        ad_ratio = round(advancers / decliners, 2) if decliners > 0 else float(advancers)
+        ad_ratio = round(advancers / decliners, 2) if decliners > 0 else (float(advancers) if advancers > 0 else 1.0)
 
         return {
             "advancers": advancers,
@@ -110,3 +107,28 @@ class MarketAnalytics:
             "total_tracked": total,
             "market_sentiment": "Bullish" if advancers > decliners else ("Bearish" if decliners > advancers else "Neutral"),
         }
+
+
+def run_analysis(df: Optional[pd.DataFrame] = None, db: Optional[DatabaseManager] = None, config: Optional[Config] = None) -> Dict[str, Any]:
+    """Execute complete analytics computation suite."""
+    from analytics.kpi_analysis import KPIAnalytics
+    m_analytics = MarketAnalytics(config, db)
+    k_analytics = KPIAnalytics(config, db)
+
+    if df is None:
+        df = m_analytics.get_latest_market_data()
+
+    breadth = m_analytics.calculate_market_breadth(df)
+    sector_df = m_analytics.calculate_sector_performance(df)
+    top_gainers = k_analytics.get_top_gainers(10, df)
+    top_losers = k_analytics.get_top_losers(10, df)
+    kpis = k_analytics.get_executive_summary_kpis(df)
+
+    return {
+        "breadth": breadth,
+        "sector_performance": sector_df,
+        "top_gainers": top_gainers,
+        "top_losers": top_losers,
+        "kpis": kpis,
+        "market_df": df,
+    }

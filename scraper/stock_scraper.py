@@ -26,26 +26,26 @@ class StockScraper:
 
     # Default market seed data for deterministic fallback and offline demo
     FALLBACK_STOCKS = [
-        {"symbol": "RELIANCE", "name": "Reliance Industries Ltd", "sector": "Energy", "industry": "Oil & Gas", "price": "₹2,980.50", "prev_close": "₹2,945.00", "change": "+1.21%", "volume": "4.8M"},
-        {"symbol": "TCS", "name": "Tata Consultancy Services", "sector": "Information Technology", "industry": "IT Services", "price": "₹4,120.00", "prev_close": "₹4,080.00", "change": "+0.98%", "volume": "2.1M"},
-        {"symbol": "HDFCBANK", "name": "HDFC Bank Ltd", "sector": "Financial Services", "industry": "Private Bank", "price": "₹1,640.25", "prev_close": "₹1,655.00", "change": "-0.89%", "volume": "8.5M"},
-        {"symbol": "INFY", "name": "Infosys Ltd", "sector": "Information Technology", "industry": "IT Services", "price": "₹1,890.80", "prev_close": "₹1,860.00", "change": "+1.66%", "volume": "6.2M"},
-        {"symbol": "ICICIBANK", "name": "ICICI Bank Ltd", "sector": "Financial Services", "industry": "Private Bank", "price": "₹1,220.10", "prev_close": "₹1,210.00", "change": "+0.83%", "volume": "5.4M"},
-        {"symbol": "TATAMOTORS", "name": "Tata Motors Ltd", "sector": "Automobile", "industry": "Auto Manufacturers", "price": "₹990.40", "prev_close": "₹970.00", "change": "+2.10%", "volume": "9.1M"},
-        {"symbol": "HINDUNILVR", "name": "Hindustan Unilever Ltd", "sector": "Consumer Goods", "industry": "FMCG", "price": "₹2,680.00", "prev_close": "₹2,695.00", "change": "-0.56%", "volume": "1.3M"},
-        {"symbol": "SUNPHARMA", "name": "Sun Pharmaceutical Ind", "sector": "Healthcare", "industry": "Pharmaceuticals", "price": "₹1,750.60", "prev_close": "₹1,730.00", "change": "+1.19%", "volume": "2.8M"},
-        {"symbol": "ITC", "name": "ITC Ltd", "sector": "Consumer Goods", "industry": "Diversified FMCG", "price": "₹495.20", "prev_close": "₹490.00", "change": "+1.06%", "volume": "11.2M"},
-        {"symbol": "BHARTIARTL", "name": "Bharti Airtel Ltd", "sector": "Telecommunication", "industry": "Telecom Services", "price": "₹1,580.00", "prev_close": "₹1,560.00", "change": "+1.28%", "volume": "4.1M"},
-        {"symbol": "WIPRO", "name": "Wipro Ltd", "sector": "Information Technology", "industry": "IT Services", "price": "₹530.40", "prev_close": "₹542.00", "change": "-2.14%", "volume": "3.9M"},
-        {"symbol": "SBIN", "name": "State Bank of India", "sector": "Financial Services", "industry": "Public Bank", "price": "₹810.50", "prev_close": "₹805.00", "change": "+0.68%", "volume": "14.2M"},
-        {"symbol": "LT", "name": "Larsen & Toubro Ltd", "sector": "Construction", "industry": "Engineering & Infra", "price": "₹3,560.00", "prev_close": "₹3,520.00", "change": "+1.14%", "volume": "1.8M"},
-        {"symbol": "MARUTI", "name": "Maruti Suzuki India", "sector": "Automobile", "industry": "Auto Manufacturers", "price": "₹12,450.00", "prev_close": "₹12,600.00", "change": "-1.19%", "volume": "0.6M"},
-        {"symbol": "BAJFINANCE", "name": "Bajaj Finance Ltd", "sector": "Financial Services", "industry": "NBFC", "price": "₹7,250.00", "prev_close": "₹7,180.00", "change": "+0.97%", "volume": "1.1M"},
-        {"symbol": "ASIANPAINT", "name": "Asian Paints Ltd", "sector": "Consumer Goods", "industry": "Paints & Coatings", "price": "₹2,840.00", "prev_close": "₹2,890.00", "change": "-1.73%", "volume": "1.5M"},
-        {"symbol": "TITAN", "name": "Titan Company Ltd", "sector": "Consumer Goods", "industry": "Luxury & Retail", "price": "₹3,420.00", "prev_close": "₹3,380.00", "change": "+1.18%", "volume": "1.9M"},
-        {"symbol": "ADANIENT", "name": "Adani Enterprises Ltd", "sector": "Metals & Mining", "industry": "Trading & Resources", "price": "₹3,020.00", "prev_close": "₹2,950.00", "change": "+2.37%", "volume": "3.3M"},
-        {"symbol": "NTPC", "name": "NTPC Ltd", "sector": "Utilities", "industry": "Power Generation", "price": "₹395.00", "prev_close": "₹392.00", "change": "+0.77%", "volume": "8.0M"},
-        {"symbol": "TATASTEEL", "name": "Tata Steel Ltd", "sector": "Metals & Mining", "industry": "Steel", "price": "₹152.80", "prev_close": "₹156.00", "change": "-2.05%", "volume": "22.5M"},
+        {"symbol": "RELIANCE", "company_name": "Reliance Industries", "sector": "Energy", "industry": "Oil & Gas", "price": "₹2,980.50", "previous_close": "₹2,945.00", "change_percent": "+1.21%", "volume": "4.8M"},
+        {"symbol": "TCS", "company_name": "Tata Consultancy Services", "sector": "IT", "industry": "IT Services", "price": "₹4,120.00", "previous_close": "₹4,080.00", "change_percent": "+0.98%", "volume": "2.1M"},
+        {"symbol": "HDFCBANK", "company_name": "HDFC Bank Ltd", "sector": "Banking", "industry": "Private Bank", "price": "₹1,640.25", "previous_close": "₹1,655.00", "change_percent": "-0.89%", "volume": "8.5M"},
+        {"symbol": "INFY", "company_name": "Infosys Ltd", "sector": "IT", "industry": "IT Services", "price": "₹1,890.80", "previous_close": "₹1,860.00", "change_percent": "+1.66%", "volume": "6.2M"},
+        {"symbol": "ICICIBANK", "company_name": "ICICI Bank Ltd", "sector": "Banking", "industry": "Private Bank", "price": "₹1,220.10", "previous_close": "₹1,210.00", "change_percent": "+0.83%", "volume": "5.4M"},
+        {"symbol": "TATAMOTORS", "company_name": "Tata Motors Ltd", "sector": "Automobile", "industry": "Auto Manufacturers", "price": "₹990.40", "previous_close": "₹970.00", "change_percent": "+2.10%", "volume": "9.1M"},
+        {"symbol": "HINDUNILVR", "company_name": "Hindustan Unilever Ltd", "sector": "Consumer Goods", "industry": "FMCG", "price": "₹2,680.00", "previous_close": "₹2,695.00", "change_percent": "-0.56%", "volume": "1.3M"},
+        {"symbol": "SUNPHARMA", "company_name": "Sun Pharmaceutical Ind", "sector": "Healthcare", "industry": "Pharma", "price": "₹1,750.60", "previous_close": "₹1,730.00", "change_percent": "+1.19%", "volume": "2.8M"},
+        {"symbol": "ITC", "company_name": "ITC Ltd", "sector": "Consumer Goods", "industry": "Diversified FMCG", "price": "₹495.20", "previous_close": "₹490.00", "change_percent": "+1.06%", "volume": "11.2M"},
+        {"symbol": "BHARTIARTL", "company_name": "Bharti Airtel Ltd", "sector": "Telecom", "industry": "Telecom Services", "price": "₹1,580.00", "previous_close": "₹1,560.00", "change_percent": "+1.28%", "volume": "4.1M"},
+        {"symbol": "WIPRO", "company_name": "Wipro Ltd", "sector": "IT", "industry": "IT Services", "price": "₹530.40", "previous_close": "₹542.00", "change_percent": "-2.14%", "volume": "3.9M"},
+        {"symbol": "SBIN", "company_name": "State Bank of India", "sector": "Banking", "industry": "Public Bank", "price": "₹810.50", "previous_close": "₹805.00", "change_percent": "+0.68%", "volume": "14.2M"},
+        {"symbol": "LT", "company_name": "Larsen & Toubro Ltd", "sector": "Construction", "industry": "Engineering & Infra", "price": "₹3,560.00", "previous_close": "₹3,520.00", "change_percent": "+1.14%", "volume": "1.8M"},
+        {"symbol": "MARUTI", "company_name": "Maruti Suzuki India", "sector": "Automobile", "industry": "Auto Manufacturers", "price": "₹12,450.00", "previous_close": "₹12,600.00", "change_percent": "-1.19%", "volume": "0.6M"},
+        {"symbol": "BAJFINANCE", "company_name": "Bajaj Finance Ltd", "sector": "Financial Services", "industry": "NBFC", "price": "₹7,250.00", "previous_close": "₹7,180.00", "change_percent": "+0.97%", "volume": "1.1M"},
+        {"symbol": "ASIANPAINT", "company_name": "Asian Paints Ltd", "sector": "Consumer Goods", "industry": "Paints", "price": "₹2,840.00", "previous_close": "₹2,890.00", "change_percent": "-1.73%", "volume": "1.5M"},
+        {"symbol": "TITAN", "company_name": "Titan Company Ltd", "sector": "Consumer Goods", "industry": "Luxury & Retail", "price": "₹3,420.00", "previous_close": "₹3,380.00", "change_percent": "+1.18%", "volume": "1.9M"},
+        {"symbol": "ADANIENT", "company_name": "Adani Enterprises Ltd", "sector": "Metals & Mining", "industry": "Resources", "price": "₹3,020.00", "previous_close": "₹2,950.00", "change_percent": "+2.37%", "volume": "3.3M"},
+        {"symbol": "NTPC", "company_name": "NTPC Ltd", "sector": "Utilities", "industry": "Power Generation", "price": "₹395.00", "previous_close": "₹392.00", "change_percent": "+0.77%", "volume": "8.0M"},
+        {"symbol": "TATASTEEL", "company_name": "Tata Steel Ltd", "sector": "Metals & Mining", "industry": "Steel", "price": "₹152.80", "previous_close": "₹156.00", "change_percent": "-2.05%", "volume": "22.5M"},
     ]
 
     def __init__(self, config: Optional[Config] = None):
@@ -159,11 +159,11 @@ class StockScraper:
             rows_html += f"""
             <tr class="stock-row">
                 <td class="symbol">{s['symbol']}</td>
-                <td class="name">{s['name']}</td>
+                <td class="name">{s['company_name']}</td>
                 <td class="sector">{s['sector']}</td>
                 <td class="price">{s['price']}</td>
-                <td class="prev-close">{s['prev_close']}</td>
-                <td class="change">{s['change']}</td>
+                <td class="prev-close">{s['previous_close']}</td>
+                <td class="change">{s['change_percent']}</td>
                 <td class="volume">{s['volume']}</td>
             </tr>
             """
@@ -225,9 +225,14 @@ class StockScraper:
             logger.info("Page %d: extracted %d records.", page, len(page_records))
             all_records.extend(page_records)
 
-            # Apply rate limiting delay between page requests
             if page < total_pages:
                 time.sleep(self.config.SCRAPER_RATE_LIMIT_DELAY)
 
         logger.info("Multi-page scraping complete: %d total records collected.", len(all_records))
         return all_records
+
+
+def scrape_stocks(pages: int = 4, config: Optional[Config] = None) -> List[Dict[str, Any]]:
+    """Functional helper to scrape stock records across pages."""
+    scraper = StockScraper(config)
+    return scraper.scrape_multi_page(total_pages=pages)
