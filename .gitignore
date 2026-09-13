@@ -30,3 +30,7 @@ reports/output/*
 # Logs
 *.log
 pipeline.log
+
+# IDE & agent scratch dirs
+.agents/
+.claude/

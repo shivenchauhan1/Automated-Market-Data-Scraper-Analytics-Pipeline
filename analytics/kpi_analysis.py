@@ -106,39 +106,101 @@ class KPIAnalytics:
         filtered = df[(df["pe_ratio"] > 0) & (df["pe_ratio"] <= max_pe) & (df["profit"] > 0)]
         return filtered.sort_values("pe_ratio", ascending=True).reset_index(drop=True)
 
-    def get_stock_profile(self, symbol: str) -> Dict[str, Any]:
-        """Fetch comprehensive stock profile combining fundamentals and historical price analytics."""
-        sym = symbol.upper()
+    def get_company_profile(self, symbol: str) -> Dict[str, Any]:
+        """
+        Fetch comprehensive company intelligence profile combining master metadata,
+        latest fundamentals, time-series history, technicals (SMAs, returns), and volatility metrics.
+        All fields are populated strictly from real database records without fabricating data.
+        """
+        sym = symbol.strip().upper()
         df_latest = self.market_analytics.get_latest_market_data()
-        stock_row = df_latest[df_latest["symbol"] == sym]
+        stock_row = df_latest[df_latest["symbol"] == sym] if not df_latest.empty and "symbol" in df_latest.columns else pd.DataFrame()
 
+        # Fetch historical price observations
+        df_history = self.market_analytics.get_historical_prices(symbol=sym, days=180)
         historical_metrics = self.market_analytics.calculate_stock_historical_metrics(sym)
 
         if not stock_row.empty:
             r = stock_row.iloc[0]
+            close_val = float(r["close_price"]) if "close_price" in r and not pd.isna(r["close_price"]) else historical_metrics.get("current_price")
+            change_val = float(r["change_percent"]) if "change_percent" in r and not pd.isna(r["change_percent"]) else historical_metrics.get("daily_change_pct")
+            open_val = float(r["open_price"]) if "open_price" in r and not pd.isna(r["open_price"]) else None
+            high_val = float(r["high_price"]) if "high_price" in r and not pd.isna(r["high_price"]) else None
+            low_val = float(r["low_price"]) if "low_price" in r and not pd.isna(r["low_price"]) else None
+            vol_val = int(r["volume"]) if "volume" in r and not pd.isna(r["volume"]) else 0
+            mcap_val = float(r["market_cap"]) if "market_cap" in r and not pd.isna(r["market_cap"]) else None
+            pe_val = float(r["pe_ratio"]) if "pe_ratio" in r and not pd.isna(r["pe_ratio"]) else None
+            eps_val = float(r["eps"]) if "eps" in r and not pd.isna(r["eps"]) else None
+            rev_val = float(r["revenue"]) if "revenue" in r and not pd.isna(r["revenue"]) else None
+            profit_val = float(r["profit"]) if "profit" in r and not pd.isna(r["profit"]) else None
+            debt_val = float(r["debt"]) if "debt" in r and not pd.isna(r["debt"]) else None
+
             profile = {
                 "symbol": sym,
-                "company_name": r.get("company_name", sym),
-                "sector": r.get("sector", "General"),
-                "industry": r.get("industry", "General"),
-                "current_price": r.get("close_price", historical_metrics.get("current_price")),
-                "daily_change_pct": r.get("change_percent", historical_metrics.get("daily_change_pct")),
-                "volume": int(r.get("volume", 0)) if not pd.isna(r.get("volume")) else 0,
-                "market_cap": r.get("market_cap"),
-                "pe_ratio": r.get("pe_ratio"),
-                "eps": r.get("eps"),
-                "revenue": r.get("revenue"),
-                "profit": r.get("profit"),
-                "debt": r.get("debt"),
+                "company_name": str(r.get("company_name", sym)),
+                "sector": str(r.get("sector", "General")),
+                "industry": str(r.get("industry", "General")),
+                "current_price": close_val,
+                "price": close_val,
+                "close_price": close_val,
+                "daily_change_pct": change_val,
+                "change_percent": change_val,
+                "open_price": open_val,
+                "high_price": high_val,
+                "low_price": low_val,
+                "volume": vol_val,
+                "market_cap": mcap_val,
+                "pe_ratio": pe_val,
+                "eps": eps_val,
+                "revenue": rev_val,
+                "profit": profit_val,
+                "debt": debt_val,
+                "return_1d_pct": change_val,
+                "return_7d_pct": historical_metrics.get("return_7d_pct"),
+                "return_30d_pct": historical_metrics.get("return_30d_pct"),
+                "sma_7": historical_metrics.get("sma_7"),
+                "sma_30": historical_metrics.get("sma_30"),
+                "period_high": historical_metrics.get("period_high") or high_val,
+                "period_low": historical_metrics.get("period_low") or low_val,
+                "historical_volatility": historical_metrics.get("historical_volatility"),
+                "volatility": historical_metrics.get("historical_volatility"),
+                "observation_count": len(df_history),
+                "history": df_history,
+                "price_history": df_history,
+                "status": "FOUND",
             }
         else:
+            # Check if company exists in master table even if no current prices
+            try:
+                comp_df = self.db.query_to_dataframe("SELECT * FROM companies WHERE symbol = ?", (sym,))
+            except Exception:
+                comp_df = pd.DataFrame()
+
+            if not comp_df.empty:
+                r_comp = comp_df.iloc[0]
+                company_name = str(r_comp.get("company_name", sym))
+                sector = str(r_comp.get("sector", "General"))
+                industry = str(r_comp.get("industry", "General"))
+                status = "FOUND"
+            else:
+                company_name = sym
+                sector = "General"
+                industry = "General"
+                status = "NOT_FOUND"
+
             profile = {
                 "symbol": sym,
-                "company_name": sym,
-                "sector": "General",
-                "industry": "General",
+                "company_name": company_name,
+                "sector": sector,
+                "industry": industry,
                 "current_price": historical_metrics.get("current_price"),
+                "price": historical_metrics.get("current_price"),
+                "close_price": historical_metrics.get("current_price"),
                 "daily_change_pct": historical_metrics.get("daily_change_pct"),
+                "change_percent": historical_metrics.get("daily_change_pct"),
+                "open_price": None,
+                "high_price": None,
+                "low_price": None,
                 "volume": 0,
                 "market_cap": None,
                 "pe_ratio": None,
@@ -146,7 +208,22 @@ class KPIAnalytics:
                 "revenue": None,
                 "profit": None,
                 "debt": None,
+                "return_1d_pct": historical_metrics.get("daily_change_pct"),
+                "return_7d_pct": historical_metrics.get("return_7d_pct"),
+                "return_30d_pct": historical_metrics.get("return_30d_pct"),
+                "sma_7": historical_metrics.get("sma_7"),
+                "sma_30": historical_metrics.get("sma_30"),
+                "period_high": historical_metrics.get("period_high"),
+                "period_low": historical_metrics.get("period_low"),
+                "historical_volatility": historical_metrics.get("historical_volatility"),
+                "volatility": historical_metrics.get("historical_volatility"),
+                "observation_count": len(df_history),
+                "history": df_history,
+                "price_history": df_history,
+                "status": status,
             }
 
-        profile.update(historical_metrics)
         return profile
+
+    # Alias for backward compatibility
+    get_stock_profile = get_company_profile

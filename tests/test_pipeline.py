@@ -350,3 +350,103 @@ class TestReportingLayer:
         result = syncer.sync_dashboard(analytics={"data_quality_score": 98.5})
         assert result is True
 
+
+# ==============================================================================
+# 7. COMPANY DRILLDOWN & PROFILE TESTS
+# ==============================================================================
+
+class TestCompanyProfile:
+    def test_get_company_profile_existing(self, config, db_manager):
+        kpi = KPIAnalytics(config, db_manager)
+        
+        # Load sample company
+        data = {
+            "companies": pd.DataFrame([{
+                "symbol": "RELIANCE",
+                "company_name": "Reliance Industries Ltd",
+                "sector": "Energy",
+                "industry": "Oil & Gas",
+            }]),
+            "prices": pd.DataFrame([{
+                "symbol": "RELIANCE",
+                "price_date": "2026-09-13",
+                "open_price": 2980.0,
+                "high_price": 3050.0,
+                "low_price": 2970.0,
+                "close_price": 3020.0,
+                "change_percent": 1.34,
+                "volume": 4500000,
+            }]),
+            "fundamentals": pd.DataFrame([{
+                "symbol": "RELIANCE",
+                "market_cap": 2045000.0,
+                "pe_ratio": 26.5,
+                "eps": 114.0,
+                "revenue": 950000.0,
+                "profit": 74000.0,
+                "debt": 120000.0,
+            }]),
+        }
+        load_to_database(data, db=db_manager, config=config)
+
+        profile = kpi.get_company_profile("RELIANCE")
+        assert profile is not None
+        assert profile["symbol"] == "RELIANCE"
+        assert profile["company_name"] == "Reliance Industries Ltd"
+        assert profile["sector"] == "Energy"
+        assert profile["current_price"] == 3020.0
+        assert profile["change_percent"] == 1.34
+        assert profile["volume"] == 4500000
+        assert profile["market_cap"] == 2045000.0
+        assert profile["pe_ratio"] == 26.5
+        assert profile["profit"] == 74000.0
+        assert profile["status"] == "FOUND"
+
+    def test_get_company_profile_unknown_symbol(self, config, db_manager):
+        kpi = KPIAnalytics(config, db_manager)
+        profile = kpi.get_company_profile("UNKNOWN_TICKER")
+        assert profile is not None
+        assert profile["symbol"] == "UNKNOWN_TICKER"
+        assert profile["status"] == "NOT_FOUND"
+        assert profile["current_price"] is None
+        assert profile["market_cap"] is None
+
+    def test_get_company_profile_missing_fundamentals(self, config, db_manager):
+        kpi = KPIAnalytics(config, db_manager)
+        data = {
+            "companies": pd.DataFrame([{
+                "symbol": "HDFCBANK",
+                "company_name": "HDFC Bank",
+                "sector": "Banking",
+                "industry": "Financial Services",
+            }]),
+            "prices": pd.DataFrame([{
+                "symbol": "HDFCBANK",
+                "price_date": "2026-09-13",
+                "open_price": 1600.0,
+                "high_price": 1625.0,
+                "low_price": 1595.0,
+                "close_price": 1618.0,
+                "change_percent": 1.12,
+                "volume": 3200000,
+            }]),
+            "fundamentals": pd.DataFrame(),
+        }
+        load_to_database(data, db=db_manager, config=config)
+
+        profile = kpi.get_company_profile("HDFCBANK")
+        assert profile is not None
+        assert profile["symbol"] == "HDFCBANK"
+        assert profile["current_price"] == 1618.0
+        assert profile["pe_ratio"] is None
+        assert profile["market_cap"] is None
+        assert profile["status"] == "FOUND"
+
+    def test_get_company_profile_empty_database(self, config, db_manager):
+        kpi = KPIAnalytics(config, db_manager)
+        profile = kpi.get_company_profile("TCS")
+        assert profile is not None
+        assert profile["symbol"] == "TCS"
+        assert profile["status"] == "NOT_FOUND"
+
+

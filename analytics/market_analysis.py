@@ -315,6 +315,12 @@ class MarketAnalytics:
             "market_sentiment": "Bullish" if advancers > decliners else ("Bearish" if decliners > advancers else "Neutral"),
         }
 
+    def get_company_profile(self, symbol: str) -> Dict[str, Any]:
+        """Fetch full company profile delegating to KPIAnalytics."""
+        from analytics.kpi_analysis import KPIAnalytics
+        kpi = KPIAnalytics(self.config, self.db)
+        return kpi.get_company_profile(symbol)
+
 
 def run_analysis(df: Optional[pd.DataFrame] = None, db: Optional[DatabaseManager] = None, config: Optional[Config] = None) -> Dict[str, Any]:
     """Execute complete analytics suite."""
