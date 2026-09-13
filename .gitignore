@@ -1,0 +1,29 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Caches and virtual environments
+.pytest_cache/
+.venv/
+venv/
+ENV/
+env/
+
+# Environment configurations and secret keys
+.env
+config/service_account.json
+*.pem
+
+# Local databases and runtime snapshots
+data/*.db
+data/raw/*.json
+data/processed/*.csv
+reports/output/*.xlsx
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!reports/output/.gitkeep
+
+# Logs
+*.log
+pipeline.log
