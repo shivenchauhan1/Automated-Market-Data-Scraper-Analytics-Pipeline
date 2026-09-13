@@ -22,7 +22,7 @@ class MarketAnalytics:
         self.db = db_manager or get_db_manager(self.config)
 
     def get_latest_market_data(self) -> pd.DataFrame:
-        """Fetch latest stock prices merged with company metadata and fundamentals."""
+        """Fetch latest stock prices merged with company metadata and latest fundamentals."""
         query = """
         SELECT 
             c.company_id,
@@ -45,10 +45,17 @@ class MarketAnalytics:
             f.debt
         FROM companies c
         JOIN stock_prices p ON c.company_id = p.company_id
-        LEFT JOIN fundamentals f ON c.company_id = f.company_id
+        LEFT JOIN fundamentals f ON f.fundamental_id = (
+            SELECT MAX(f2.fundamental_id) 
+            FROM fundamentals f2 
+            WHERE f2.company_id = c.company_id
+        )
         WHERE p.price_date = (SELECT MAX(price_date) FROM stock_prices)
         """
-        return self.db.query_to_dataframe(query)
+        df = self.db.query_to_dataframe(query)
+        if not df.empty and "symbol" in df.columns:
+            df = df.drop_duplicates(subset=["symbol"], keep="last").reset_index(drop=True)
+        return df
 
     def get_historical_price_series(self, symbol: Optional[str] = None, limit_days: int = 90) -> pd.DataFrame:
         """

@@ -152,6 +152,17 @@ db = get_db_manager(config)
 market_analytics = MarketAnalytics(config, db)
 kpi_analytics = KPIAnalytics(config, db)
 
+def make_widget_key(prefix: str, symbol: str = "", index: Optional[int] = None) -> str:
+    """Generate deterministic unique Streamlit widget keys across namespaces."""
+    sym = str(symbol).strip().upper() if symbol else ""
+    parts = [prefix]
+    if index is not None:
+        parts.append(str(index))
+    if sym:
+        parts.append(sym)
+    return "_".join(parts)
+
+
 # Initialize Session State
 if "selected_company" not in st.session_state:
     st.session_state["selected_company"] = "RELIANCE"
@@ -302,6 +313,7 @@ with st.sidebar:
     st.caption("PIPELINE ORCHESTRATION")
     if st.button(
         "↻ Refresh Market Data",
+        key="btn_sidebar_refresh_pipeline",
         help="Execute the full multi-page scrape, transform, validate, and load pipeline",
         type="primary",
         icon=":material/refresh:",
@@ -523,16 +535,21 @@ with nav_tabs[0]:
     st.subheader("Market Movers & Outliers", anchor=False)
     m_col1, m_col2 = st.columns(2)
 
-    top_gainers = kpi_analytics.get_top_gainers(5, df_market)
-    top_losers = kpi_analytics.get_top_losers(5, df_market)
+    top_gainers = kpi_analytics.get_top_gainers(10, df_market)
+    top_losers = kpi_analytics.get_top_losers(10, df_market)
+
+    if not top_gainers.empty and "symbol" in top_gainers.columns:
+        top_gainers = top_gainers.drop_duplicates(subset=["symbol"]).head(5).reset_index(drop=True)
+    if not top_losers.empty and "symbol" in top_losers.columns:
+        top_losers = top_losers.drop_duplicates(subset=["symbol"]).head(5).reset_index(drop=True)
 
     with m_col1:
         with st.container(border=True):
             st.markdown("<span style='color: #10B981; font-weight: 700;'>▲ TOP 5 GAINERS</span>", unsafe_allow_html=True)
             if not top_gainers.empty:
-                for _, r in top_gainers.iterrows():
-                    sym = r["symbol"]
-                    c_name = r.get("company_name", sym)
+                for idx, r in top_gainers.iterrows():
+                    sym = str(r["symbol"]).strip().upper()
+                    c_name = str(r.get("company_name", sym))
                     pr = float(r.get("close_price", 0.0))
                     chg = float(r.get("change_percent", 0.0))
                     vol = int(r.get("volume", 0)) if not pd.isna(r.get("volume")) else 0
@@ -543,7 +560,8 @@ with nav_tabs[0]:
                     with c_b:
                         st.markdown(f"₹{pr:,.2f} &nbsp; <span style='color: #10B981; font-weight: 600;'>+{chg:.2f}%</span>", unsafe_allow_html=True)
                     with c_c:
-                        if st.button("Inspect", key=f"btn_g_{sym}", help=f"Inspect {sym} in Company Intelligence"):
+                        key = make_widget_key("gainer_inspect", sym, idx)
+                        if st.button("Inspect", key=key, help=f"Inspect {sym} in Company Intelligence"):
                             st.session_state["selected_company"] = sym
                             st.toast(f"Selected {sym}. Switch to Company Intelligence tab.", icon=":material/visibility:")
 
@@ -551,9 +569,9 @@ with nav_tabs[0]:
         with st.container(border=True):
             st.markdown("<span style='color: #EF4444; font-weight: 700;'>▼ TOP 5 LOSERS</span>", unsafe_allow_html=True)
             if not top_losers.empty:
-                for _, r in top_losers.iterrows():
-                    sym = r["symbol"]
-                    c_name = r.get("company_name", sym)
+                for idx, r in top_losers.iterrows():
+                    sym = str(r["symbol"]).strip().upper()
+                    c_name = str(r.get("company_name", sym))
                     pr = float(r.get("close_price", 0.0))
                     chg = float(r.get("change_percent", 0.0))
                     vol = int(r.get("volume", 0)) if not pd.isna(r.get("volume")) else 0
@@ -564,7 +582,8 @@ with nav_tabs[0]:
                     with c_b:
                         st.markdown(f"₹{pr:,.2f} &nbsp; <span style='color: #EF4444; font-weight: 600;'>{chg:.2f}%</span>", unsafe_allow_html=True)
                     with c_c:
-                        if st.button("Inspect", key=f"btn_l_{sym}", help=f"Inspect {sym} in Company Intelligence"):
+                        key = make_widget_key("loser_inspect", sym, idx)
+                        if st.button("Inspect", key=key, help=f"Inspect {sym} in Company Intelligence"):
                             st.session_state["selected_company"] = sym
                             st.toast(f"Selected {sym}. Switch to Company Intelligence tab.", icon=":material/visibility:")
 
@@ -846,7 +865,7 @@ with nav_tabs[3]:
         with f_row2_b:
             profitable_only = st.checkbox("Profitable Equities Only (Profit > 0)", value=False, key="scr_prof")
         with f_row2_c:
-            if st.button("Reset Filters", icon=":material/restart_alt:"):
+            if st.button("Reset Filters", key="btn_scr_reset_filters", icon=":material/restart_alt:"):
                 st.rerun()
 
     # Apply Screener Logic
@@ -902,6 +921,7 @@ with nav_tabs[3]:
     if report_files:
         with open(report_files[0], "rb") as f:
             st.download_button(
+                key="btn_download_screener_excel",
                 label=f"📥 Download Financial Excel Report ({report_files[0].name})",
                 data=f.read(),
                 file_name=report_files[0].name,

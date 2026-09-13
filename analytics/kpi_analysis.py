@@ -82,20 +82,22 @@ class KPIAnalytics:
         }
 
     def get_top_gainers(self, n: int = 10, df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
-        """Get top N gainers ordered by percentage return."""
+        """Get top N gainers ordered by percentage return (one record per company)."""
         if df is None:
             df = self.market_analytics.get_latest_market_data()
         if df.empty or "change_percent" not in df.columns:
             return pd.DataFrame()
-        return df.sort_values("change_percent", ascending=False).head(n).reset_index(drop=True)
+        df_clean = df.drop_duplicates(subset=["symbol"]) if "symbol" in df.columns else df
+        return df_clean.sort_values("change_percent", ascending=False).head(n).reset_index(drop=True)
 
     def get_top_losers(self, n: int = 10, df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
-        """Get top N losers ordered by percentage change ascending."""
+        """Get top N losers ordered by percentage change ascending (one record per company)."""
         if df is None:
             df = self.market_analytics.get_latest_market_data()
         if df.empty or "change_percent" not in df.columns:
             return pd.DataFrame()
-        return df.sort_values("change_percent", ascending=True).head(n).reset_index(drop=True)
+        df_clean = df.drop_duplicates(subset=["symbol"]) if "symbol" in df.columns else df
+        return df_clean.sort_values("change_percent", ascending=True).head(n).reset_index(drop=True)
 
     def get_undervalued_picks(self, max_pe: float = 25.0, df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
         """Identify profitable companies with P/E below threshold."""
