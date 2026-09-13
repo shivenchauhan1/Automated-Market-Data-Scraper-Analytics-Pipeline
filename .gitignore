@@ -16,11 +16,12 @@ config/service_account.json
 *.pem
 
 # Local databases and runtime snapshots
+data/database/*.db
 data/*.db
-data/raw/*.json
-data/processed/*.csv
-data/quarantine/*.json
-reports/output/*.xlsx
+data/raw/*
+data/processed/*
+data/quarantine/*
+reports/output/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 !data/quarantine/.gitkeep

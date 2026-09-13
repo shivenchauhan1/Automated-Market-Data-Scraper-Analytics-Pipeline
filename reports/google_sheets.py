@@ -60,10 +60,12 @@ class GoogleSheetsSync:
             breadth = self.market_analytics.calculate_market_breadth(df_market)
             top_gainers = self.kpi_analytics.get_top_gainers(5, df_market)
 
+        dq_score = analytics.get("data_quality_score", 100.0) if analytics else 100.0
+
         if not self.is_configured():
             logger.info("Google Service Account credentials not found at %s.", self.creds_path)
             logger.info("Operating in Google Sheets SIMULATION MODE (Dry-Run).")
-            self._simulate_sync(kpis, breadth, top_gainers, df_sector)
+            self._simulate_sync(kpis, breadth, top_gainers, df_sector, dq_score=dq_score)
             return True
 
         try:
@@ -82,15 +84,17 @@ class GoogleSheetsSync:
             rows = [
                 ["MARKET ANALYTICS DASHBOARD", ""],
                 ["Last Updated", datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
+                ["Data Quality Score", f"{dq_score:.2f}%"],
                 ["", ""],
-                ["Total Companies Tracked", kpis["total_companies"]],
-                ["Average Daily Return", f"{kpis['avg_daily_return']:+.2f}%"],
-                ["Total Market Cap (Cr)", f"INR {kpis['total_market_cap_cr']:,.2f}"],
-                ["Market Breadth", f"{breadth['ad_ratio']} ({breadth['market_sentiment']})"],
-                ["Top Gainer", f"{kpis['top_gainer_symbol']} ({kpis['top_gainer_change']:+.2f}%)"],
-                ["Top Loser", f"{kpis['top_loser_symbol']} ({kpis['top_loser_change']:+.2f}%)"],
+                ["Total Companies Tracked", kpis.get("total_companies", 0)],
+                ["Average Daily Return", f"{kpis.get('avg_daily_return', 0.0):+.2f}%"],
+                ["Total Market Cap (Cr)", f"INR {kpis.get('total_market_cap_cr', 0.0):,.2f}"],
+                ["Market Breadth (A/D)", f"{breadth.get('ad_ratio', 0.0)} ({breadth.get('market_sentiment', 'Neutral')})"],
+                ["Advancing / Declining", f"{breadth.get('advances', 0)} / {breadth.get('declines', 0)}"],
+                ["Top Gainer", f"{kpis.get('top_gainer_symbol', 'N/A')} ({kpis.get('top_gainer_change', 0.0):+.2f}%)"],
+                ["Top Loser", f"{kpis.get('top_loser_symbol', 'N/A')} ({kpis.get('top_loser_change', 0.0):+.2f}%)"],
             ]
-            ws.update("A1:B9", rows)
+            ws.update("A1:B11", rows)
             logger.info("Successfully updated Google Sheet '%s'.", self.sheet_name)
             return True
 
@@ -98,16 +102,17 @@ class GoogleSheetsSync:
             logger.error("Failed to update Google Sheets: %s", e)
             return False
 
-    def _simulate_sync(self, kpis: Dict[str, Any], breadth: Dict[str, Any], top_gainers: pd.DataFrame, df_sector: pd.DataFrame) -> None:
+    def _simulate_sync(self, kpis: Dict[str, Any], breadth: Dict[str, Any], top_gainers: pd.DataFrame, df_sector: pd.DataFrame, dq_score: float = 100.0) -> None:
         """Log simulated push payload for interview demo verification."""
         logger.info("[GoogleSheets-Sync] Push Payload verified:")
         logger.info("  -> Timestamp: %s", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-        logger.info("  -> Tracked Companies: %d", kpis["total_companies"])
-        logger.info("  -> Avg Return: %+.2f%%", kpis["avg_daily_return"])
-        logger.info("  -> Total Market Cap: INR %s Cr", f"{kpis['total_market_cap_cr']:,.2f}")
-        logger.info("  -> Top Gainer: %s (%+.2f%%)", kpis["top_gainer_symbol"], kpis["top_gainer_change"])
-        logger.info("  -> Top Loser: %s (%+.2f%%)", kpis["top_loser_symbol"], kpis["top_loser_change"])
-        logger.info("  -> Sectors Synced: %d", len(df_sector))
+        logger.info("  -> Data Quality Score: %.2f%%", dq_score)
+        logger.info("  -> Tracked Companies: %d", kpis.get("total_companies", 0))
+        logger.info("  -> Avg Return: %+.2f%%", kpis.get("avg_daily_return", 0.0))
+        logger.info("  -> Total Market Cap: INR %s Cr", f"{kpis.get('total_market_cap_cr', 0.0):,.2f}")
+        logger.info("  -> Top Gainer: %s (%+.2f%%)", kpis.get("top_gainer_symbol", "N/A"), kpis.get("top_gainer_change", 0.0))
+        logger.info("  -> Top Loser: %s (%+.2f%%)", kpis.get("top_loser_symbol", "N/A"), kpis.get("top_loser_change", 0.0))
+        logger.info("  -> Sectors Synced: %d", len(df_sector) if df_sector is not None else 0)
         logger.info("[GoogleSheets-Sync] Dry-run update completed successfully.")
 
 

@@ -1,7 +1,7 @@
 """
 Validation Layer of ETL Pipeline.
 Enforces schema validation, type integrity, and domain constraints using Pydantic V2 models.
-Quarantines malformed records to data/quarantine/invalid_records.json with detailed diagnostic logging.
+Quarantines malformed records to data/quarantine/invalid_records.json with taxonomy details (timestamp, source, field, error_type).
 """
 
 import json
@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Type
 
 import pandas as pd
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from config.config import Config, get_config
 
 logger = logging.getLogger("MarketPipeline.Validate")
@@ -29,7 +29,6 @@ class StockRecord(BaseModel):
     high_price: Optional[float] = Field(default=None, ge=0)
     low_price: Optional[float] = Field(default=None, ge=0)
     close_price: float = Field(..., ge=0)
-    previous_close: Optional[float] = Field(default=None, ge=0)
     change_percent: float = Field(default=0.0)
     volume: Optional[int] = Field(default=None, ge=0)
 
@@ -53,6 +52,14 @@ class FundamentalRecord(BaseModel):
     revenue: Optional[float] = Field(default=None)
     profit: Optional[float] = Field(default=None)
     debt: Optional[float] = Field(default=None, ge=0)
+
+    @field_validator("symbol")
+    @classmethod
+    def validate_symbol(cls, v: str) -> str:
+        cleaned = v.strip().upper()
+        if not cleaned:
+            raise ValueError("Fundamental symbol cannot be empty.")
+        return cleaned
 
 
 class CompanyRecord(BaseModel):
@@ -83,12 +90,13 @@ class MarketValidator:
 
     def __init__(self, config: Optional[Config] = None):
         self.config = config or get_config()
-        self.quarantine_dir = self.config.BASE_DIR / "data" / "quarantine"
+        self.quarantine_dir = self.config.DATA_QUARANTINE_DIR
 
     def validate_dataframe(
         self,
         df: pd.DataFrame,
         model_cls: Type[BaseModel],
+        source: str = "etl_pipeline",
     ) -> Tuple[pd.DataFrame, List[Dict[str, Any]]]:
         """
         Validate each row of DataFrame against given Pydantic model.
@@ -106,12 +114,29 @@ class MarketValidator:
             try:
                 validated_model = model_cls(**clean_dict)
                 valid_rows.append(validated_model.model_dump())
+            except ValidationError as val_err:
+                error_details = val_err.errors()[0] if val_err.errors() else {}
+                field_name = str(error_details.get("loc", ["unknown"])[0])
+                msg = error_details.get("msg", str(val_err))
+                
+                quarantine_errors.append({
+                    "timestamp": datetime.now().isoformat(),
+                    "source": source,
+                    "record": row_dict,
+                    "validation_error": msg,
+                    "field": field_name,
+                    "error_type": "validation_error",
+                    "row_index": idx,
+                })
             except Exception as err:
                 quarantine_errors.append({
-                    "row_index": idx,
+                    "timestamp": datetime.now().isoformat(),
+                    "source": source,
                     "record": row_dict,
-                    "error": str(err),
-                    "quarantined_at": datetime.now().isoformat(),
+                    "validation_error": str(err),
+                    "field": "general",
+                    "error_type": "type_error",
+                    "row_index": idx,
                 })
 
         valid_df = pd.DataFrame(valid_rows) if valid_rows else pd.DataFrame(columns=df.columns)
@@ -119,8 +144,14 @@ class MarketValidator:
 
     def quarantine_invalid_records(self, invalid_records: Dict[str, List[Dict[str, Any]]]) -> Optional[Path]:
         """Write quarantined records to data/quarantine/invalid_records.json."""
-        total_errors = sum(len(errs) for errs in invalid_records.values())
-        if total_errors == 0:
+        all_quarantine_entries = []
+        for entity_type, errs in invalid_records.items():
+            for err in errs:
+                entry = dict(err)
+                entry["entity"] = entity_type
+                all_quarantine_entries.append(entry)
+
+        if not all_quarantine_entries:
             return None
 
         self.quarantine_dir.mkdir(parents=True, exist_ok=True)
@@ -128,14 +159,14 @@ class MarketValidator:
 
         quarantine_payload = {
             "last_quarantined_at": datetime.now().isoformat(),
-            "total_quarantined_records": total_errors,
-            "errors": invalid_records,
+            "total_quarantined_records": len(all_quarantine_entries),
+            "records": all_quarantine_entries,
         }
 
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(quarantine_payload, f, indent=2, ensure_ascii=False)
 
-        logger.warning("Quarantined %d malformed records to: %s", total_errors, filepath)
+        logger.warning("Quarantined %d malformed records to: %s", len(all_quarantine_entries), filepath)
         return filepath
 
     def validate_all(
@@ -146,13 +177,13 @@ class MarketValidator:
         logger.info("Validating transformed data against Pydantic schemas...")
 
         validated_companies, comp_errs = self.validate_dataframe(
-            transformed_data["companies"], CompanyRecord
+            transformed_data.get("companies", pd.DataFrame()), CompanyRecord, source="companies_transform"
         )
         validated_prices, price_errs = self.validate_dataframe(
-            transformed_data["prices"], StockRecord
+            transformed_data.get("prices", pd.DataFrame()), StockRecord, source="prices_transform"
         )
         validated_fundamentals, fund_errs = self.validate_dataframe(
-            transformed_data["fundamentals"], FundamentalRecord
+            transformed_data.get("fundamentals", pd.DataFrame()), FundamentalRecord, source="fundamentals_transform"
         )
 
         all_errors = {

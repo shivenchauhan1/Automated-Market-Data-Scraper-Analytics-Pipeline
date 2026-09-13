@@ -1,6 +1,6 @@
 """
 Excel Report Generator Module.
-Creates multi-sheet financial Excel workbooks with corporate styling, conditional formatting, and embedded charts using OpenPyXL.
+Creates multi-sheet financial Excel workbooks with corporate styling, Data Quality metrics, conditional formatting, and embedded charts using OpenPyXL.
 """
 
 import logging
@@ -16,6 +16,7 @@ from openpyxl.utils import get_column_letter
 from analytics.kpi_analysis import KPIAnalytics
 from analytics.market_analysis import MarketAnalytics
 from config.config import Config, get_config
+from database.db_connection import DatabaseManager
 
 logger = logging.getLogger("MarketPipeline.ExcelReport")
 
@@ -23,10 +24,11 @@ logger = logging.getLogger("MarketPipeline.ExcelReport")
 class ExcelReportGenerator:
     """Generates corporate-grade Excel reports with styling and charts."""
 
-    def __init__(self, config: Optional[Config] = None):
+    def __init__(self, config: Optional[Config] = None, db: Optional[DatabaseManager] = None):
         self.config = config or get_config()
-        self.market_analytics = MarketAnalytics(self.config)
-        self.kpi_analytics = KPIAnalytics(self.config)
+        self.db = db
+        self.market_analytics = MarketAnalytics(self.config, self.db)
+        self.kpi_analytics = KPIAnalytics(self.config, self.db)
 
         # Style Definitions
         self.header_fill = PatternFill(start_color="1B365D", end_color="1B365D", fill_type="solid")
@@ -50,7 +52,11 @@ class ExcelReportGenerator:
         thin_border_side = Side(border_style="thin", color="D3D3D3")
         self.cell_border = Border(left=thin_border_side, right=thin_border_side, top=thin_border_side, bottom=thin_border_side)
 
-    def generate_full_report(self, output_filename: Optional[str] = None) -> Path:
+    def generate_full_report(
+        self,
+        output_filename: Optional[str] = None,
+        data_quality_score: Optional[float] = None,
+    ) -> Path:
         """Generate full 3-sheet market workbook."""
         logger.info("================== [PHASE 5: EXCEL REPORT GENERATION] ==================")
         wb = openpyxl.Workbook()
@@ -67,7 +73,7 @@ class ExcelReportGenerator:
 
         # 2. Sheet 2: KPI Summary
         ws_kpi = wb.create_sheet(title="KPI Summary")
-        self._build_kpi_summary_sheet(ws_kpi, df_market, kpi_summary, breadth)
+        self._build_kpi_summary_sheet(ws_kpi, df_market, kpi_summary, breadth, data_quality_score)
 
         # 3. Sheet 3: Sector Analysis
         ws_sector = wb.create_sheet(title="Sector Analysis")
@@ -100,7 +106,7 @@ class ExcelReportGenerator:
         """Construct Sheet 1: Full market data table with formatting."""
         headers = [
             "Symbol", "Company Name", "Sector", "Industry", "Close Price (₹)",
-            "Prev Close (₹)", "Change %", "Volume", "Market Cap (Cr ₹)", "P/E Ratio"
+            "Change %", "Volume", "Market Cap (Cr ₹)", "P/E Ratio"
         ]
         
         ws.append(headers)
@@ -117,7 +123,6 @@ class ExcelReportGenerator:
                 r.sector,
                 r.industry,
                 r.close_price,
-                getattr(r, "previous_close", r.close_price),
                 (r.change_percent / 100.0) if r.change_percent is not None else None,
                 r.volume,
                 getattr(r, "market_cap", None),
@@ -134,10 +139,10 @@ class ExcelReportGenerator:
                 cell.border = self.cell_border
                 cell.fill = fill
 
-                if col_idx in [5, 6]:
+                if col_idx == 5:
                     cell.number_format = '₹#,##0.00'
                     cell.alignment = Alignment(horizontal="right")
-                elif col_idx == 7:
+                elif col_idx == 6:
                     cell.number_format = '+0.00%;-0.00%;0.00%'
                     cell.alignment = Alignment(horizontal="right")
                     if r.change_percent is not None:
@@ -147,14 +152,14 @@ class ExcelReportGenerator:
                         elif r.change_percent < 0:
                             cell.fill = self.red_fill
                             cell.font = self.red_font
-                elif col_idx in [8, 9]:
+                elif col_idx in [7, 8]:
                     cell.number_format = '#,##0'
                     cell.alignment = Alignment(horizontal="right")
-                elif col_idx == 10:
+                elif col_idx == 9:
                     cell.number_format = '0.00'
                     cell.alignment = Alignment(horizontal="right")
 
-    def _build_kpi_summary_sheet(self, ws, df, kpis, breadth):
+    def _build_kpi_summary_sheet(self, ws, df, kpis, breadth, data_quality_score=None):
         """Construct Sheet 2: Executive KPI Cards & Top Gainers/Losers."""
         ws.merge_cells("A1:E1")
         title_cell = ws.cell(row=1, column=1, value="EXECUTIVE MARKET KPI SUMMARY")
@@ -162,8 +167,10 @@ class ExcelReportGenerator:
         title_cell.font = Font(name="Segoe UI", size=14, bold=True, color="FFFFFF")
         title_cell.alignment = Alignment(horizontal="center", vertical="center")
 
-        ws.cell(row=2, column=1, value=f"Report Generated: {datetime.now().strftime('%d-%b-%Y %H:%M:%S')}")
+        ws.cell(row=2, column=1, value=f"Last Updated: {datetime.now().strftime('%d %B %Y, %H:%M:%S')}")
         ws.cell(row=2, column=1).font = Font(name="Segoe UI", size=9, italic=True)
+
+        dq_display = f"{data_quality_score:.1f}%" if data_quality_score is not None else "100.0%"
 
         kpi_rows = [
             ("Total Companies Tracked", kpis["total_companies"], "Count"),
@@ -171,11 +178,11 @@ class ExcelReportGenerator:
             ("Declining Stocks", breadth["decliners"], "Losers Count"),
             ("Market Breadth (A/D Ratio)", f"{breadth['ad_ratio']} ({breadth['market_sentiment']})", f"{breadth['advancers']} Up / {breadth['decliners']} Down"),
             ("Average Daily Return", f"{kpis['avg_daily_return']:+.2f}%", "Market Average"),
+            ("Best Performer", f"{kpis['top_gainer_symbol']} ({kpis['top_gainer_change']:+.2f}%)", "Top Daily Gainer"),
+            ("Worst Performer", f"{kpis['top_loser_symbol']} ({kpis['top_loser_change']:+.2f}%)", "Top Daily Loser"),
+            ("Data Quality Score", dq_display, "Weighted Pipeline Integrity Score"),
             ("Total Market Cap (Cr)", f"₹{kpis['total_market_cap_cr']:,.2f} Cr", "Aggregate Market Cap"),
             ("Average P/E Ratio", f"{kpis['avg_pe_ratio']:.2f}", "Valuation Multiple"),
-            ("Top Gainer", f"{kpis['top_gainer_symbol']} ({kpis['top_gainer_change']:+.2f}%)", "Best Daily Return"),
-            ("Top Loser", f"{kpis['top_loser_symbol']} ({kpis['top_loser_change']:+.2f}%)", "Worst Daily Return"),
-            ("Most Active by Volume", f"{kpis['most_active_symbol']} ({kpis['most_active_volume']:,} shares)", "Trading Liquidity"),
         ]
 
         ws.cell(row=4, column=1, value="Metric").fill = self.sub_header_fill
@@ -241,7 +248,7 @@ class ExcelReportGenerator:
 
     def _build_sector_analysis_sheet(self, ws, df_sector):
         """Construct Sheet 3: Sector metrics table and embedded OpenPyXL Chart."""
-        headers = ["Sector", "Number of Stocks", "Average Return %", "Total Market Cap (Cr ₹)", "Total Volume", "Advancers", "Decliners"]
+        headers = ["Sector", "Number of Stocks", "Average Return %", "Sector Volatility %", "Total Market Cap (Cr ₹)", "Total Volume", "Advancers", "Decliners"]
         ws.append(headers)
 
         for col_idx in range(1, len(headers) + 1):
@@ -255,6 +262,7 @@ class ExcelReportGenerator:
                 r.sector,
                 r.company_count,
                 r.avg_return_pct / 100.0,
+                getattr(r, "sector_volatility", 0.0) / 100.0,
                 r.total_market_cap_cr,
                 r.total_volume,
                 r.advancers,
@@ -270,19 +278,20 @@ class ExcelReportGenerator:
                 cell.font = self.regular_font
                 cell.border = self.cell_border
                 cell.fill = fill
-                if col_idx == 3:
+                if col_idx in [3, 4]:
                     cell.number_format = '+0.00%;-0.00%;0.00%'
                     cell.alignment = Alignment(horizontal="right")
-                    if r.avg_return_pct > 0:
-                        cell.fill = self.green_fill
-                        cell.font = self.green_font
-                    elif r.avg_return_pct < 0:
-                        cell.fill = self.red_fill
-                        cell.font = self.red_font
-                elif col_idx == 4:
+                    if col_idx == 3:
+                        if r.avg_return_pct > 0:
+                            cell.fill = self.green_fill
+                            cell.font = self.green_font
+                        elif r.avg_return_pct < 0:
+                            cell.fill = self.red_fill
+                            cell.font = self.red_font
+                elif col_idx == 5:
                     cell.number_format = '₹#,##0.00'
                     cell.alignment = Alignment(horizontal="right")
-                elif col_idx in [2, 5, 6, 7]:
+                elif col_idx in [2, 6, 7, 8]:
                     cell.number_format = '#,##0'
                     cell.alignment = Alignment(horizontal="right")
 
@@ -302,10 +311,16 @@ class ExcelReportGenerator:
             chart.set_categories(categories)
             chart.legend = None
 
-            ws.add_chart(chart, "I2")
+            ws.add_chart(chart, "J2")
 
 
-def generate_excel_report(valid_data: Optional[Any] = None, analytics: Optional[Any] = None, output_filename: Optional[str] = None, config: Optional[Config] = None) -> Path:
+def generate_excel_report(
+    valid_data: Optional[Any] = None,
+    analytics: Optional[Any] = None,
+    data_quality_score: Optional[float] = None,
+    output_filename: Optional[str] = None,
+    config: Optional[Config] = None,
+) -> Path:
     """Functional helper for Excel report generation."""
     generator = ExcelReportGenerator(config)
-    return generator.generate_full_report(output_filename)
+    return generator.generate_full_report(output_filename, data_quality_score=data_quality_score)

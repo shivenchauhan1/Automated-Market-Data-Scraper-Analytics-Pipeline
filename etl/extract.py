@@ -1,7 +1,7 @@
 """
 Extract Layer of ETL Pipeline.
 Coordinates data ingestion from multi-page web scrapers, fundamental scrapers, and REST APIs.
-Persists immutable raw data snapshots to data/raw/ with timestamp tracking.
+Persists immutable raw data snapshots in date-partitioned folders: data/raw/YYYY-MM-DD/.
 """
 
 import json
@@ -65,7 +65,7 @@ class MarketExtractor:
             "api_quotes": raw_api_quotes,
         }
 
-        # 4. Save Raw Snapshot to Disk
+        # 4. Save Date-Partitioned Snapshots
         if save_raw_snapshot:
             self.save_raw_data(extracted_payload, start_time)
 
@@ -81,18 +81,33 @@ class MarketExtractor:
         return extracted_payload
 
     def save_raw_data(self, payload: Dict[str, Any], timestamp: Optional[datetime] = None) -> Path:
-        """Persist raw JSON snapshot to data/raw/."""
+        """
+        Persist raw JSON snapshots in date-partitioned directory:
+        data/raw/YYYY-MM-DD/stocks.json & fundamentals.json
+        """
         timestamp = timestamp or datetime.now()
-        timestamp_str = timestamp.strftime("%Y%m%d_%H%M%S")
-        filename = f"market_raw_{timestamp_str}.json"
-        filepath = self.config.DATA_RAW_DIR / filename
-        filepath.parent.mkdir(parents=True, exist_ok=True)
+        date_str = timestamp.strftime("%Y-%m-%d")
+        partition_dir = self.config.DATA_RAW_DIR / date_str
+        partition_dir.mkdir(parents=True, exist_ok=True)
 
-        with open(filepath, "w", encoding="utf-8") as f:
+        # Save stocks.json
+        stocks_path = partition_dir / "stocks.json"
+        with open(stocks_path, "w", encoding="utf-8") as f:
+            json.dump(payload.get("stocks", []), f, indent=2, ensure_ascii=False)
+
+        # Save fundamentals.json
+        fundamentals_path = partition_dir / "fundamentals.json"
+        with open(fundamentals_path, "w", encoding="utf-8") as f:
+            json.dump(payload.get("fundamentals", []), f, indent=2, ensure_ascii=False)
+
+        # Save complete run snapshot
+        time_str = timestamp.strftime("%H%M%S")
+        full_snapshot_path = partition_dir / f"market_snapshot_{time_str}.json"
+        with open(full_snapshot_path, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2, ensure_ascii=False)
 
-        logger.info("Persisted raw data snapshot to: %s", filepath)
-        return filepath
+        logger.info("Persisted date-partitioned raw snapshots to: %s", partition_dir)
+        return partition_dir
 
 
 def extract(pages: int = 4, config: Optional[Config] = None) -> Dict[str, Any]:

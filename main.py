@@ -32,6 +32,7 @@ from database.db_connection import DatabaseManager, get_db_manager
 from etl.extract import extract, save_raw_data
 from etl.transform import transform
 from etl.validate import validate, quarantine
+from etl.quality import compute_data_quality
 from etl.load import load_to_database
 from analytics.market_analysis import run_analysis
 from reports.excel_report import generate_excel_report
@@ -95,18 +96,27 @@ def run_pipeline(
         print("      ✓ Currency normalized")
         print("      ✓ Percentages normalized")
 
-        # [3/7] Validate Schema & Quarantine
-        print("\n[3/7] Validating schema...")
+        # [3/7] Validate Schema & Data Quality
+        print("\n[3/7] Validating schema & data quality...")
         valid_data, invalid_data = validate(transformed_data, config=config)
         quarantine_path = quarantine(invalid_data, config=config)
+        
+        dq_report = compute_data_quality(
+            raw_data=raw_data,
+            transformed_data=transformed_data,
+            validated_data=valid_data,
+            errors=invalid_data,
+            config=config,
+        )
         
         valid_count = len(valid_data["prices"])
         quarantined_count = sum(len(errs) for errs in invalid_data.values())
         print(f"      ✓ {valid_count} valid")
         if quarantined_count > 0:
-            print(f"      ⚠ {quarantined_count} quarantined ({quarantine_path})")
+            print(f"      ⚠ {quarantined_count} quarantined ({quarantine_path.name})")
         else:
             print("      ⚠ 0 quarantined")
+        print(f"      ✓ Data Quality Score: {dq_report.quality_score:.2f}% (Grade: {dq_report.grade})")
 
         if dry_run:
             print("\n[DRY-RUN] Skipping database insert and report generation.")
@@ -115,16 +125,18 @@ def run_pipeline(
         # [4/7] Load Relational Database
         print(f"\n[4/7] Loading {db.active_engine.upper()} database...")
         load_summary = load_to_database(valid_data, db=db, config=config)
-        print("      ✓ Companies upserted")
-        print("      ✓ Prices loaded")
-        print("      ✓ Fundamentals loaded")
+        print(f"      ✓ Companies upserted: {load_summary.get('companies_upserted', 0)}")
+        print(f"      ✓ Prices loaded: {load_summary.get('prices_loaded', 0)}")
+        print(f"      ✓ Fundamentals loaded: {load_summary.get('fundamentals_loaded', 0)}")
 
         # [5/7] Run Analytics
         print("\n[5/7] Running analytics...")
         analytics = run_analysis(df=None, db=db, config=config)
+        analytics["data_quality_score"] = dq_report.quality_score
         print("      ✓ Market breadth calculated")
         print("      ✓ Sector returns calculated")
         print("      ✓ Top gainers/losers calculated")
+        print("      ✓ Historical technicals & volatility computed")
 
         # [6/7] Generating Reports
         print("\n[6/7] Generating reports...")
@@ -141,14 +153,16 @@ def run_pipeline(
             records_extracted=extracted_count,
             records_loaded=load_summary["total_records"],
             status="SUCCESS",
+            data_quality_score=dq_report.quality_score,
         )
 
         # [7/7] Pipeline Complete Summary Banner
         print("\n[7/7] Pipeline complete\n")
-        print(f"Records processed: {extracted_count}")
-        print(f"Records loaded:    {load_summary['total_records']}")
-        print(f"Records rejected:  {quarantined_count}")
-        print(f"Execution time:    {elapsed:.2f}s")
+        print(f"Records processed:  {extracted_count}")
+        print(f"Records loaded:     {load_summary['total_records']}")
+        print(f"Records rejected:   {quarantined_count}")
+        print(f"Data Quality Score: {dq_report.quality_score:.2f}% ({dq_report.grade})")
+        print(f"Execution time:     {elapsed:.2f}s")
         print("==================================================\n")
 
         return True

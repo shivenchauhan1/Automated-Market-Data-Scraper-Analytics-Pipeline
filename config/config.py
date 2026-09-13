@@ -1,5 +1,5 @@
 """
-Central Configuration Module
+Central Configuration Module.
 Handles environment variable loading, default values, directory provisioning, and connection configurations.
 """
 
@@ -20,17 +20,19 @@ class Config:
     BASE_DIR: Path = BASE_DIR
     DATA_RAW_DIR: Path = BASE_DIR / os.getenv("DATA_RAW_DIR", "data/raw")
     DATA_PROCESSED_DIR: Path = BASE_DIR / os.getenv("DATA_PROCESSED_DIR", "data/processed")
+    DATA_QUARANTINE_DIR: Path = BASE_DIR / os.getenv("DATA_QUARANTINE_DIR", "data/quarantine")
     REPORTS_DIR: Path = BASE_DIR / os.getenv("REPORTS_DIR", "reports/output")
     LOG_FILE_PATH: Path = BASE_DIR / os.getenv("LOG_FILE_PATH", "pipeline.log")
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()
 
     # Database settings
-    DB_TYPE: str = os.getenv("DB_TYPE", "sqlite").lower()  # "mysql" or "sqlite"
-    DB_HOST: str = os.getenv("DB_HOST", "localhost")
-    DB_PORT: int = int(os.getenv("DB_PORT", "3306"))
-    DB_USER: str = os.getenv("DB_USER", "root")
-    DB_PASSWORD: str = os.getenv("DB_PASSWORD", "")
-    DB_NAME: str = os.getenv("DB_NAME", "market_analytics")
+    USE_SQLITE: bool = os.getenv("USE_SQLITE", "true").lower() in ("true", "1", "yes")
+    DB_TYPE: str = "sqlite" if USE_SQLITE else "mysql"
+    DB_HOST: str = os.getenv("MYSQL_HOST", os.getenv("DB_HOST", "localhost"))
+    DB_PORT: int = int(os.getenv("MYSQL_PORT", os.getenv("DB_PORT", "3306")))
+    DB_USER: str = os.getenv("MYSQL_USER", os.getenv("DB_USER", "root"))
+    DB_PASSWORD: str = os.getenv("MYSQL_PASSWORD", os.getenv("DB_PASSWORD", ""))
+    DB_NAME: str = os.getenv("MYSQL_DATABASE", os.getenv("DB_NAME", "market_analytics"))
     SQLITE_DB_PATH: Path = BASE_DIR / os.getenv("SQLITE_DB_PATH", "data/market_analytics.db")
 
     # Scraper settings
@@ -44,8 +46,8 @@ class Config:
     SCRAPER_RATE_LIMIT_DELAY: float = float(os.getenv("SCRAPER_RATE_LIMIT_DELAY", "0.5"))
 
     # Financial API settings
-    FINANCIAL_API_KEY: str = os.getenv("FINANCIAL_API_KEY", "demo_api_key")
-    FINANCIAL_API_URL: str = os.getenv("FINANCIAL_API_URL", "https://api.example.com/v1/market")
+    FINANCIAL_API_KEY: str = os.getenv("API_KEY", os.getenv("FINANCIAL_API_KEY", "demo_api_key"))
+    FINANCIAL_API_URL: str = os.getenv("API_URL", os.getenv("FINANCIAL_API_URL", "https://api.example.com/v1/market"))
 
     # Google Sheets settings
     GOOGLE_SHEETS_CREDENTIALS_PATH: Path = BASE_DIR / os.getenv(
@@ -58,6 +60,7 @@ class Config:
         """Create necessary directories if they do not exist."""
         cls.DATA_RAW_DIR.mkdir(parents=True, exist_ok=True)
         cls.DATA_PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+        cls.DATA_QUARANTINE_DIR.mkdir(parents=True, exist_ok=True)
         cls.REPORTS_DIR.mkdir(parents=True, exist_ok=True)
         cls.SQLITE_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 

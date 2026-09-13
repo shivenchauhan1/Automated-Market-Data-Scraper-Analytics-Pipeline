@@ -1,242 +1,382 @@
 # 📈 Automated Market Data Scraper & Analytics Pipeline
 
-> A robust, end-to-end Python data engineering and financial analytics pipeline that extracts multi-page market data, cleans and validates schema constraints, stores records in a normalized relational database (MySQL with SQLite fallback), computes financial KPIs, and delivers automated reports across Excel, Google Sheets, and an interactive Streamlit dashboard.
+[![CI/CD Pipeline](https://github.com/shivenchauhan1/Automated-Market-Data-Scraper-Analytics-Pipeline/actions/workflows/tests.yml/badge.svg)](https://github.com/shivenchauhan1/Automated-Market-Data-Scraper-Analytics-Pipeline/actions/workflows/tests.yml)
+[![Python 3.10 | 3.11 | 3.12](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)](https://www.python.org/)
+[![Database](https://img.shields.io/badge/Database-MySQL%20%7C%20SQLite%20(3NF)-orange.svg)](https://www.mysql.com/)
+[![Docker](https://img.shields.io/badge/Docker-Containerized%20Compose-2496ED.svg)](https://www.docker.com/)
+[![Streamlit](https://img.shields.io/badge/Streamlit-Interactive%20Dashboard-FF4B4B.svg)](https://streamlit.io/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+> **Enterprise-Grade Market Data Engineering & Financial Intelligence Platform.**  
+> Ingests multi-page web quotes and REST API telemetry, performs normalization and Pydantic v2 schema governance, computes a deterministic **4-Factor Data Quality Score**, preserves historical time-series observations in a normalized 3NF relational database, computes technical indicators (7D/30D SMAs, returns, volatility, market breadth), and delivers multi-channel financial intelligence via styled Excel reports, Google Sheets, and an interactive Streamlit application.
 
 ---
 
-## 🏗️ Architecture & Data Workflow
+## 🏗️ Architecture & Data Lifecycle
 
 ```mermaid
 flowchart TD
-    A[Financial Websites / Multi-Page Web Sources] -->|Requests + BeautifulSoup| C[Raw Market Data Snapshot]
-    B[Financial REST APIs] -->|JSON Payloads| C
-    
-    C --> D[Data Transformation & Cleansing]
-    D -->|Currency, % & Volume Cleaning| E[Pydantic V2 Schema Validation]
-    
-    E -->|Valid Records| F[(Relational Database\nMySQL / SQLite)]
-    E -->|Quarantined Bad Records| G[Error & Quarantine Logs]
-    
-    F --> H[Market & KPI Analytics Engine]
-    
-    H --> I[Automated Excel Workbook\nMulti-Sheet + Charts]
-    H --> J[Google Sheets Sync\nLive KPI Dashboard]
-    H --> K[Interactive Streamlit Dashboard\nReal-Time UI & Screener]
+    subgraph INGESTION ["1. Ingestion Layer"]
+        A[Financial Websites / Multi-Page HTML] -->|Requests + BS4 + Exponential Retries| R1[Raw Stock Quotes]
+        B[Corporate Fundamentals Web Scraper] -->|HTML Parsing| R2[Financial Ratios]
+        C[Financial REST APIs] -->|JSON Payloads| R3[Real-Time Quotes]
+        R1 & R2 & R3 --> D[Raw Date-Partitioned Snapshots\n`data/raw/YYYY-MM-DD/`]
+    end
+
+    subgraph TRANSFORMATION ["2. Transformation & Cleansing"]
+        D --> E[Data Cleaning Engine\n`etl/transform.py`]
+        E -->|Currency, %, Scale Normalization| F[Normalized DataFrames]
+    end
+
+    subgraph QUALITY_GOVERNANCE ["3. Schema Validation & Data Quality Layer"]
+        F --> G[Pydantic V2 Schema Enforcer\n`etl/validate.py`]
+        G -->|Malformed Records| H[Quarantine Ledger\n`data/quarantine/invalid_records.json`]
+        G -->|Valid Entities| I[Valid Entity Payloads]
+        F & I & H --> J[4-Factor Data Quality Engine\n`etl/quality.py`]
+        J -->|Telemetry & Score Metric| K[Data Quality Score %]
+    end
+
+    subgraph PERSISTENCE ["4. Relational Storage Layer (3NF)"]
+        I --> L[(MySQL 8.0 / SQLite\nNon-Destructive Upsert)]
+        K --> L
+        L --> M1[companies]
+        L --> M2[stock_prices]
+        L --> M3[fundamentals]
+        L --> M4[scraper_runs]
+    end
+
+    subgraph ANALYTICS ["5. Analytics & Technical Engine"]
+        M1 & M2 & M3 --> N[Financial Analytics Core\n`analytics/market_analysis.py`]
+        N --> O1[7D / 30D Returns & SMAs]
+        N --> O2[Historical & Sector Volatility]
+        N --> O3[Market Breadth & A/D Ratio]
+        N --> O4[Value & Quality Stock Screening]
+    end
+
+    subgraph PRESENTATION ["6. Multi-Channel Business Intelligence"]
+        O1 & O2 & O3 & O4 --> P[Styled Multi-Sheet Excel\n`openpyxl` + Dynamic Charts]
+        O1 & O2 & O3 & O4 --> Q[Live Google Sheets Sync\nService Account / Dry-Run]
+        O1 & O2 & O3 & O4 --> R[Streamlit Web Dashboard\nTechnicals, Screener & ETL Control]
+    end
 ```
 
 ---
 
-## 🚀 Key Features
+## ⚡ Core Engineering Highlights
 
-1. **Multi-Page Web Scraping with Resilient Retries**:
-   - Built with `requests` and `BeautifulSoup4`.
-   - Features `urllib3` exponential backoff retry strategies (status codes `429`, `500`, `502`, `503`, `504`).
-   - Handles multi-page pagination (`?page=1..N`) and Next-page link discovery.
-   - Built-in deterministic fallback and simulated HTML engine for 100% reliable offline testing and interviews.
+- **Time-Series Historical Persistence**: Relational schema enforces a composite unique constraint `(company_id, price_date)` enabling non-destructive daily upserts that preserve historical price trajectories without overwriting past observations.
+- **Deterministic Data Quality Framework**: Calculates a rigorous 4-factor Data Quality Score with automated schema quarantine taxonomy recording exact timestamp, source, raw record, field, and failure reason.
+- **Financial Technical Analytics**: Computes 7-day and 30-day Simple Moving Averages (SMA), historical returns, standard deviation of return volatility, sector-level dispersion, and Advance/Decline breadth ratios.
+- **Production Dual-Engine Storage**: Connects natively to **MySQL 8.0** with connection pooling and failover recovery, while maintaining zero-setup **SQLite** dev/test portability (`USE_SQLITE=true`).
+- **Complete Dockerization & CI/CD**: Containerized with multi-container `docker-compose.yml` including persistent MySQL volumes and healthchecks, accompanied by automated GitHub Actions CI testing matrix across Python 3.10, 3.11, and 3.12.
+- **Interactive BI Dashboard**: Streamlit interface with 6 tabs, Altair technical overlays (Price vs 7D/30D SMAs), company 360° inspection, value screener, live execution logs, and on-demand pipeline execution.
 
-2. **REST API Financial Ingestion**:
-   - Demonstrates dual ingestion capabilities (Web Scraping + REST APIs).
-   - Ingests structured JSON market quotes with authentication header handling and error recovery.
+---
 
-3. **Production Data Cleaning & Transformation**:
-   - Cleans localized currency strings (`₹1,450.50`, `$2,980.00` → `1450.50`).
-   - Normalizes signed percentages (`+1.25%`, `-0.45%` → `1.25`, `-0.45`).
-   - Converts financial scale units (`4.2M` → `4,200,000`, `₹5,23,450 Cr` → `523450.0`).
+## 🛡️ Data Quality Framework & Scoring Formula
 
-4. **Pydantic V2 Schema Validation**:
-   - Strictly enforces entity integrity for `CompanyModel`, `StockPriceModel`, and `FundamentalModel`.
-   - Prevents negative prices, empty symbols, or invalid date formats from corrupting the database.
-   - Bad records are automatically quarantined with diagnostic logging.
+Data quality is quantified deterministically during every pipeline execution using a weighted 4-factor formula:
 
-5. **Normalized Relational Database Layer**:
-   - Fully normalized 3NF relational schema:
-     - `companies`: Master entity (`symbol`, `company_name`, `sector`, `industry`).
-     - `stock_prices`: Daily time-series prices (`price_date`, `open`, `high`, `low`, `close`, `volume`, `change_percent`).
-     - `fundamentals`: Corporate financial ratios (`market_cap`, `pe_ratio`, `eps`, `revenue`, `profit`, `debt`).
-     - `scraper_runs`: Full ETL pipeline execution logs and telemetry tracking.
-   - **Dual Engine Support**: Natively connects to **MySQL** in production and seamlessly falls back to **SQLite** (`data/market_analytics.db`) for zero-configuration local runs.
+$$\text{Data Quality Score} = (0.40 \times S_{\text{valid}}) + (0.30 \times S_{\text{complete}}) + (0.20 \times S_{\text{unique}}) + (0.10 \times S_{\text{schema}})$$
 
-6. **Automated Multi-Sheet Excel Reporting (`openpyxl`)**:
-   - **Sheet 1 — Market Data**: Styled table with currency formatting and dynamic conditional color formatting (Green for gainers, Red for losers).
-   - **Sheet 2 — KPI Summary**: Executive metric cards and Top 5 Gainers/Losers.
-   - **Sheet 3 — Sector Analysis**: Sector return averages with an embedded OpenPyXL bar chart.
+| Metric Component | Weight | Mathematical Formulation | Description |
+| :--- | :---: | :--- | :--- |
+| **Validity ($S_{\text{valid}}$)** | **40%** | $\frac{N_{\text{valid}}}{N_{\text{valid}} + N_{\text{quarantined}}} \times 100$ | Percentage of records passing strict Pydantic v2 domain rules. |
+| **Completeness ($S_{\text{complete}}$)** | **30%** | $\left(1 - \frac{\text{Null Cells}}{\text{Total Expected Cells}}\right) \times 100$ | Proportion of non-null required financial fields. |
+| **Uniqueness ($S_{\text{unique}}$)** | **20%** | $\left(1 - \frac{\text{Duplicates}}{\text{Total Extracted}}\right) \times 100$ | Absence of duplicate ticker/timestamp pairs. |
+| **Schema Conformance ($S_{\text{schema}}$)** | **10%** | $\max\left(0, 100 - (\text{Fatal Errors} \times 5)\right)$ | Type-safety and schema structural compliance. |
 
-7. **Google Sheets API Integration**:
-   - Syncs executive KPIs and leaderboards directly to a Google Sheet via `gspread` and Google Service Account credentials.
-   - Includes automatic simulation/dry-run logging when credentials are not configured.
+### Quarantined Records Ledger (`data/quarantine/invalid_records.json`)
+When an invalid record is identified, it is isolated into quarantine with structured metadata:
+```json
+[
+  {
+    "timestamp": "2026-09-13T18:28:25.120450",
+    "source": "market_prices",
+    "record": { "symbol": "BAD_TICKER", "price": -99.0, "volume": -5 },
+    "validation_error": "Input should be greater than or equal to 0",
+    "field": "close_price",
+    "error_type": "validation_error",
+    "row_index": 1
+  }
+]
+```
 
-8. **Interactive Streamlit Web Dashboard**:
-   - Visual KPI metric cards, sector distribution charts, and market breadth indicators.
-   - Searchable and filterable stock screener with Sector and P/E ratio sliders.
-   - "Run Pipeline Now" button to trigger the entire ETL pipeline directly from the UI with live progress indicators.
+---
 
-9. **Automated Scheduling**:
-   - Windows Task Scheduler automation script (`scripts/schedule_windows.ps1`).
-   - Linux Cron automation script (`scripts/schedule_cron.sh`).
+## 🗄️ Relational Database Schema (3NF)
+
+```sql
+CREATE TABLE companies (
+    company_id INT AUTO_INCREMENT PRIMARY KEY,
+    symbol VARCHAR(20) UNIQUE NOT NULL,
+    company_name VARCHAR(150) NOT NULL,
+    sector VARCHAR(100),
+    industry VARCHAR(100)
+);
+
+CREATE TABLE stock_prices (
+    price_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    company_id INT NOT NULL,
+    price_date DATE NOT NULL,
+    open_price DECIMAL(15,2),
+    high_price DECIMAL(15,2),
+    low_price DECIMAL(15,2),
+    close_price DECIMAL(15,2) NOT NULL,
+    change_percent DECIMAL(8,4),
+    volume BIGINT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (company_id) REFERENCES companies(company_id) ON DELETE CASCADE,
+    UNIQUE KEY unique_price (company_id, price_date)
+);
+
+CREATE TABLE fundamentals (
+    fundamental_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    company_id INT NOT NULL,
+    market_cap DECIMAL(20,2),
+    pe_ratio DECIMAL(10,2),
+    eps DECIMAL(10,2),
+    revenue DECIMAL(20,2),
+    profit DECIMAL(20,2),
+    debt DECIMAL(20,2),
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (company_id) REFERENCES companies(company_id) ON DELETE CASCADE,
+    UNIQUE KEY unique_fundamental (company_id, updated_at)
+);
+
+CREATE TABLE scraper_runs (
+    run_id INT AUTO_INCREMENT PRIMARY KEY,
+    source VARCHAR(50),
+    start_time TIMESTAMP NOT NULL,
+    end_time TIMESTAMP,
+    duration_seconds DECIMAL(8,2),
+    records_extracted INT DEFAULT 0,
+    records_transformed INT DEFAULT 0,
+    records_valid INT DEFAULT 0,
+    records_invalid INT DEFAULT 0,
+    records_loaded INT DEFAULT 0,
+    data_quality_score DECIMAL(5,2),
+    status VARCHAR(30) NOT NULL,
+    error_message TEXT
+);
+```
 
 ---
 
 ## 📁 Repository Structure
 
 ```
-automated-market-data-pipeline/
-│
-├── scraper/
-│   ├── __init__.py
-│   ├── stock_scraper.py          # Multi-page web scraper with retries
-│   ├── fundamentals_scraper.py   # Scraper for corporate fundamentals & ratios
-│   └── api_client.py             # REST API financial client
-│
-├── etl/
-│   ├── __init__.py
-│   ├── extract.py                # Extraction orchestrator & raw snapshots
-│   ├── transform.py              # Cleaning, currency parsing & normalization
-│   ├── validate.py               # Pydantic v2 schema & type validation
-│   └── load.py                   # Relational upsert loader & telemetry logging
-│
-├── database/
-│   ├── __init__.py
-│   ├── schema.sql                # MySQL & SQLite relational DDL
-│   └── db_connection.py          # Database connection manager & pool
-│
+Automated-Market-Data-Scraper-Analytics-Pipeline/
+├── .github/
+│   └── workflows/
+│       └── tests.yml                 # GitHub Actions CI matrix workflow
 ├── analytics/
 │   ├── __init__.py
-│   ├── market_analysis.py        # Sector returns, market breadth, volatility
-│   └── kpi_analysis.py           # Top gainers/losers, executive KPIs
-│
-├── reports/
-│   ├── __init__.py
-│   ├── excel_report.py           # OpenPyXL multi-sheet workbook generator
-│   └── google_sheets.py          # Google Sheets API updater
-│
+│   ├── kpi_analysis.py               # Top gainers/losers, executive metrics, company profiles
+│   └── market_analysis.py            # SMAs (7D/30D), returns, volatility, sector analysis
 ├── config/
 │   ├── __init__.py
-│   └── config.py                 # Environment variables & configuration
-│
-├── scripts/
-│   ├── schedule_windows.ps1      # Windows Task Scheduler automation
-│   └── schedule_cron.sh          # Linux Cron automation
-│
+│   └── config.py                     # Centralized settings & path configuration
 ├── data/
-│   ├── raw/                      # Raw JSON snapshots from scrapers
-│   └── processed/                # Transformed & cleaned data exports
-│
+│   ├── database/                     # SQLite database files
+│   ├── processed/                    # Processed CSV snapshots
+│   ├── quarantine/                   # Quarantine ledgers (invalid_records.json)
+│   └── raw/                          # Date-partitioned raw HTML/JSON extractions
+├── database/
+│   ├── __init__.py
+│   ├── db_connection.py              # Connection pool & database abstraction
+│   └── schema.sql                    # 3NF DDL for MySQL & SQLite
+├── etl/
+│   ├── __init__.py
+│   ├── extract.py                    # Multi-source ingestion & raw partitioning
+│   ├── load.py                       # Idempotent relational database loader
+│   ├── quality.py                    # 4-factor Data Quality engine & report
+│   ├── transform.py                  # Cleaning, currency parsing & normalization
+│   └── validate.py                   # Pydantic v2 schemas & quarantine taxonomy
+├── logs/                             # Rotational log files
+├── reports/
+│   ├── __init__.py
+│   ├── excel_report.py               # 3-sheet corporate OpenPyXL report generator
+│   ├── google_sheets.py              # Google Sheets live synchronization
+│   └── output/                       # Generated Excel workbooks (.xlsx)
+├── scraper/
+│   ├── __init__.py
+│   ├── api_client.py                 # REST API financial client
+│   ├── fundamentals_scraper.py       # Corporate fundamentals web scraper
+│   └── stock_scraper.py              # Multi-page web scraper with exponential retries
+├── scripts/
+│   ├── schedule_cron.sh              # Linux Cron schedule automation
+│   └── schedule_windows.ps1          # Windows Task Scheduler automation
 ├── tests/
 │   ├── __init__.py
-│   └── test_pipeline.py          # Pytest unit & integration test suite
-│
-├── dashboard.py                  # Streamlit interactive web application
-├── main.py                       # CLI pipeline orchestrator
-├── requirements.txt              # Project dependencies
-├── .env.example                  # Environment configuration template
-├── .env                          # Local environment settings
-└── README.md                     # Documentation
+│   └── test_pipeline.py              # Pytest unit & integration test suite (18 tests)
+├── .dockerignore                     # Docker build exclusion rules
+├── .env.example                      # Environment variables template
+├── .gitignore                        # Git exclusion rules
+├── dashboard.py                      # Interactive Streamlit analytics web app
+├── Dockerfile                        # Multi-stage optimized container definition
+├── docker-compose.yml                # Multi-service MySQL + Pipeline + Dashboard compose
+├── main.py                           # Master CLI pipeline orchestrator
+├── requirements.txt                  # Python dependencies
+└── README.md                         # Project documentation
 ```
 
 ---
 
-## ⚙️ Installation & Setup
+## 🚀 Quick Start Guide
 
-### 1. Clone & Install Dependencies
-```bash
-# Clone the repository
-git clone https://github.com/yourusername/automated-market-data-pipeline.git
-cd automated-market-data-pipeline
+### Option 1: Local Setup (Python Environment)
 
-# Install required Python packages
-pip install -r requirements.txt
-```
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/shivenchauhan1/Automated-Market-Data-Scraper-Analytics-Pipeline.git
+   cd Automated-Market-Data-Scraper-Analytics-Pipeline
+   ```
 
-### 2. Configure Environment (`.env`)
-Copy the template and configure your database and settings:
-```bash
-cp .env.example .env
-```
-*(Default settings use SQLite out-of-the-box. To use MySQL, set `DB_TYPE=mysql` and provide your MySQL credentials in `.env`).*
+2. **Create and activate a virtual environment**:
+   ```bash
+   python -m venv venv
+   # On Windows:
+   .\venv\Scripts\activate
+   # On Linux/macOS:
+   source venv/bin/activate
+   ```
 
----
+3. **Install dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-## 🏃 Execution Guide
+4. **Configure environment (`.env`)**:
+   ```bash
+   cp .env.example .env
+   ```
+   *(By default, `USE_SQLITE=true` runs out-of-the-box with zero configuration).*
 
-### Run End-to-End Pipeline via CLI
-```bash
-python main.py
-```
+5. **Run the Master Pipeline**:
+   ```bash
+   python main.py --pages 4
+   ```
 
-Options:
-```bash
-python main.py --pages 4 --export-excel --sync-sheets
-python main.py --dry-run      # Test extraction and validation without database writes
-```
+6. **Launch the Streamlit Analytics Dashboard**:
+   ```bash
+   streamlit run dashboard.py
+   ```
 
-### Launch Interactive Streamlit Dashboard
-```bash
-streamlit run dashboard.py
-```
-
-### Run Test Suite
-```bash
-pytest tests/test_pipeline.py -v
-```
-
-### Schedule Daily Automation
-- **Windows (PowerShell)**:
-  ```powershell
-  powershell -ExecutionPolicy Bypass -File scripts\schedule_windows.ps1
-  ```
-- **Linux (Bash)**:
-  ```bash
-  chmod +x scripts/schedule_cron.sh
-  ./scripts/schedule_cron.sh
-  ```
+7. **Run the Automated Test Suite**:
+   ```bash
+   python -m pytest tests/test_pipeline.py -v
+   ```
 
 ---
 
-## 📊 Sample Pipeline Output
+### Option 2: Docker Compose Setup (Production MySQL 8.0)
+
+Run the complete stack (MySQL 8.0 database, ETL pipeline, and Streamlit Dashboard) with a single command:
+
+```bash
+docker-compose up --build
+```
+
+- **Dashboard UI**: Accessible at `http://localhost:8501`
+- **MySQL Database**: Exposed on port `3306` with persistent storage in `mysql_data` volume.
+
+---
+
+## 🖥️ CLI Pipeline Output Sample
 
 ```
-================================================================
-🚀 AUTOMATED MARKET DATA SCRAPER & ANALYTICS PIPELINE
-================================================================
-[INFO   ] [1/6] Extracting market data across 4 pages & REST API...
-[INFO   ] [INFO] 20 raw stock records extracted.
-[INFO   ] [2/6] Cleaning, normalizing, and casting data types...
-[INFO   ] [3/6] Enforcing Pydantic v2 schema constraints...
-[INFO   ] [INFO] Validation successful: 0 fatal schema violations.
-[INFO   ] [4/6] Loading into SQLITE relational database...
-[INFO   ] [INFO] 40 records loaded into database successfully.
-[INFO   ] [5/6] Generating multi-sheet Excel KPI report...
-[INFO   ] [INFO] Excel report generated: market_analytics_report_20260913_173000.xlsx
-[INFO   ] [6/6] Synchronizing KPI dashboard to Google Sheets...
-[INFO   ] [INFO] Google Sheets sync completed.
-================================================================
-📊 EXECUTIVE MARKET SUMMARY
-================================================================
-+----------------------+--------------------+
-| KPI Metric           | Value              |
-+======================+====================+
-| Tracked Companies    | 20                 |
-| Average Daily Return | +0.47%             |
-| Total Market Cap     | ₹1,03,42,600.00 Cr |
-| Market Breadth       | 2.33 (Bullish)     |
-| Top Gainer           | ADANIENT (+2.37%)  |
-| Top Loser            | WIPRO (-2.14%)     |
-| Execution Duration   | 2.45 seconds       |
-| Database Engine      | SQLITE             |
-+----------------------+--------------------+
-[INFO   ] ✅ Pipeline completed successfully in 2.45 seconds.
+==================================================
+       AUTOMATED MARKET DATA PIPELINE
+==================================================
+[1/7] Extracting market data...
+      ✓ 20 records extracted
+
+[2/7] Transforming data...
+      ✓ Currency normalized
+      ✓ Percentages normalized
+
+[3/7] Validating schema & data quality...
+      ✓ 20 valid
+      ⚠ 0 quarantined
+      ✓ Data Quality Score: 100.00% (Grade: A)
+
+[4/7] Loading SQLITE database...
+      ✓ Companies upserted: 20
+      ✓ Prices loaded: 20
+      ✓ Fundamentals loaded: 20
+
+[5/7] Running analytics...
+      ✓ Market breadth calculated
+      ✓ Sector returns calculated
+      ✓ Top gainers/losers calculated
+      ✓ Historical technicals & volatility computed
+
+[6/7] Generating reports...
+      ✓ Excel report generated (market_analytics_report_20260913_183039.xlsx)
+      ✓ Google Sheets updated
+
+[7/7] Pipeline complete
+
+Records processed:  20
+Records loaded:     20
+Records rejected:   0
+Data Quality Score: 100.00% (A)
+Execution time:     2.78s
+==================================================
 ```
 
 ---
 
-## 💼 Resume Description & Portfolio Highlights
+## 📊 Streamlit Business Intelligence Dashboard
 
-**Project Title**: Automated Market Data Scraper & Analytics Pipeline  
-**Technologies**: Python, Pandas, SQL, MySQL, SQLite, BeautifulSoup4, Requests, Pydantic V2, OpenPyXL, Google Sheets API, Streamlit, Pytest, Windows Task Scheduler / Cron
+The Streamlit UI (`dashboard.py`) provides an interactive interface featuring:
+1. **Executive Metric Cards**: Total Equities, Gainers, Losers, Advance/Decline Ratio, Average Return %, and Data Quality Score.
+2. **Top Gainers & Losers**: 10-asset leaderboards with percentage change and volume.
+3. **Historical & Technicals**: Interactive Altair price charts with **7-day & 30-day Simple Moving Average (SMA)** overlays and trading volume subplots.
+4. **Sector Volatility & Dispersion**: Bar charts measuring standard deviation of returns across sectors.
+5. **360° Company Drilldown**: In-depth inspection card displaying financial fundamentals (P/E, EPS, Revenue, Profit, Debt) alongside historical price table.
+6. **Market Screener**: Multi-factor filtering by Sector, P/E ratio, and company search, plus direct Excel report download.
+7. **Data Quality & Quarantine Tab**: Visual audit of the 4-factor scoring breakdown and JSON inspector for quarantined malformed records.
+8. **Pipeline Telemetry**: Live table of historical ETL execution runs from `scraper_runs` and log tail viewer.
 
-**Key Resume Points**:
-- Engineered an automated Python-based ETL pipeline using Requests, BeautifulSoup, and REST APIs to extract structured market and fundamental data across multi-page sources with exponential backoff retries.
-- Implemented robust data cleansing, currency normalization, and strict Pydantic V2 schema validation to eliminate nulls and prevent database corruption.
-- Designed a normalized 3NF MySQL/SQLite relational database schema with indexed foreign keys and upsert capabilities for daily stock prices, company fundamentals, and pipeline execution logs.
-- Built automated Excel workbooks with `openpyxl` featuring custom styles, conditional formatting, and embedded charts, alongside live Google Sheets synchronization.
-- Developed an interactive Streamlit analytics dashboard with real-time stock screeners, sector breadth metrics, on-demand ETL execution, and telemetry tracking.
+---
+
+## 🧪 Testing & Validation
+
+The test suite in [`tests/test_pipeline.py`](file:///d:/Automated%20Market%20Data%20Scraper%20&%20Analytics%20Pipeline/tests/test_pipeline.py) verifies every system component in isolation and integrated:
+
+```bash
+$ python -m pytest tests/test_pipeline.py -v
+============================= test session starts =============================
+tests/test_pipeline.py::TestMarketTransformer::test_clean_price PASSED   [  5%]
+tests/test_pipeline.py::TestMarketTransformer::test_clean_percentage PASSED [ 11%]
+tests/test_pipeline.py::TestMarketTransformer::test_clean_volume PASSED  [ 16%]
+tests/test_pipeline.py::TestMarketTransformer::test_clean_market_cap_or_financial PASSED [ 22%]
+tests/test_pipeline.py::TestMarketTransformer::test_transform_stock_record PASSED [ 27%]
+tests/test_pipeline.py::TestMarketValidator::test_company_record_valid PASSED [ 33%]
+tests/test_pipeline.py::TestMarketValidator::test_company_record_invalid_empty_symbol PASSED [ 38%]
+tests/test_pipeline.py::TestMarketValidator::test_stock_record_valid PASSED [ 44%]
+tests/test_pipeline.py::TestMarketValidator::test_stock_record_invalid_negative_price PASSED [ 50%]
+tests/test_pipeline.py::TestMarketValidator::test_quarantine_taxonomy_structure PASSED [ 55%]
+tests/test_pipeline.py::TestDataQualityLayer::test_data_quality_perfect_score PASSED [ 61%]
+tests/test_pipeline.py::TestDataQualityLayer::test_data_quality_with_invalid_records PASSED [ 66%]
+tests/test_pipeline.py::TestTimeSeriesAnalytics::test_moving_averages_and_returns PASSED [ 72%]
+tests/test_pipeline.py::TestTimeSeriesAnalytics::test_historical_and_sector_volatility PASSED [ 77%]
+tests/test_pipeline.py::TestTimeSeriesAnalytics::test_market_breadth_calculation PASSED [ 83%]
+tests/test_pipeline.py::TestDatabasePersistence::test_idempotent_multi_day_upserts PASSED [ 88%]
+tests/test_pipeline.py::TestReportingLayer::test_excel_report_generation PASSED [ 94%]
+tests/test_pipeline.py::TestReportingLayer::test_google_sheets_simulation_sync PASSED [100%]
+============================= 18 passed in 3.80s ==============================
+```
+
+---
+
+## 💼 Portfolio Summary
+
+- **Architecture**: End-to-end automated ETL pipeline ingesting HTML web scrapers and REST APIs with exponential backoff retries.
+- **Data Governance**: Pydantic v2 entity validation with automated quarantine routing and a deterministic 4-factor Data Quality scoring algorithm.
+- **Data Modeling**: 3NF normalized schema in MySQL/SQLite supporting idempotent non-destructive time-series upserts.
+- **Analytics & BI**: Rolling moving averages (7D/30D), sector volatility dispersion, Advance/Decline breadth, styled multi-sheet Excel reports (`openpyxl`), Google Sheets sync, and an interactive Streamlit dashboard.
+- **DevOps**: Docker & Docker Compose containerization with MySQL healthchecks and GitHub Actions CI/CD matrix automation.
+

@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: market_analytics_mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: market_analytics
+      MYSQL_USER: market_user
+      MYSQL_PASSWORD: market_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpassword"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  pipeline:
+    build: .
+    container_name: market_analytics_pipeline
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      - USE_SQLITE=false
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_NAME=market_analytics
+      - DB_USER=market_user
+      - DB_PASSWORD=market_password
+      - SCRAPE_PAGES=4
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./reports:/app/reports
+    command: ["python", "main.py"]
+
+  dashboard:
+    build: .
+    container_name: market_analytics_dashboard
+    restart: always
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      - USE_SQLITE=false
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_NAME=market_analytics
+      - DB_USER=market_user
+      - DB_PASSWORD=market_password
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./reports:/app/reports
+    command: ["streamlit", "run", "dashboard.py", "--server.port=8501", "--server.address=0.0.0.0"]
+
+volumes:
+  mysql_data:
+    driver: local\n

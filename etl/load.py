@@ -1,6 +1,6 @@
 """
 Load Layer of ETL Pipeline.
-Loads validated dataframes into MySQL / SQLite relational tables with foreign key resolution, upserts, and telemetry tracking.
+Loads validated dataframes into MySQL / SQLite relational tables with foreign key resolution, non-destructive upserts, and load metrics tracking.
 """
 
 import logging
@@ -73,11 +73,11 @@ class MarketLoader:
             for r in rows:
                 symbol_to_id[r["symbol"]] = r["company_id"]
 
-        logger.info("Loaded/Upserted %d companies into master table.", len(df_companies))
+        logger.info("Upserted %d companies into master table.", len(symbol_to_id))
         return symbol_to_id
 
     def load_stock_prices(self, df_prices: pd.DataFrame, symbol_to_id: Dict[str, int]) -> int:
-        """Upsert daily stock price records into stock_prices table."""
+        """Upsert daily stock price records into stock_prices table preserving time-series history."""
         if df_prices.empty:
             return 0
 
@@ -93,7 +93,7 @@ class MarketLoader:
                 if not company_id:
                     continue
 
-                price_date = row["price_date"]
+                price_date = row.get("price_date", datetime.now().strftime("%Y-%m-%d"))
                 open_p = row.get("open_price")
                 high_p = row.get("high_price")
                 low_p = row.get("low_price")
@@ -214,10 +214,10 @@ class MarketLoader:
         filepath = self.config.DATA_PROCESSED_DIR / f"market_processed_{timestamp}.csv"
         filepath.parent.mkdir(parents=True, exist_ok=True)
 
-        df_p = validated_data["prices"].copy()
-        df_f = validated_data["fundamentals"].copy()
+        df_p = validated_data.get("prices", pd.DataFrame()).copy()
+        df_f = validated_data.get("fundamentals", pd.DataFrame()).copy()
 
-        if not df_f.empty:
+        if not df_f.empty and not df_p.empty:
             merged = pd.merge(df_p, df_f.drop(columns=["updated_at"], errors="ignore"), on="symbol", how="left")
         else:
             merged = df_p
@@ -231,23 +231,24 @@ class MarketLoader:
         logger.info("================== [PHASE 4: DATABASE LOAD] ==================")
         logger.info("Loading validated datasets into %s database...", self.db.active_engine)
 
-        symbol_to_id = self.load_companies(validated_data["companies"])
-        price_records = self.load_stock_prices(validated_data["prices"], symbol_to_id)
-        fund_records = self.load_fundamentals(validated_data["fundamentals"], symbol_to_id)
+        symbol_to_id = self.load_companies(validated_data.get("companies", pd.DataFrame()))
+        price_records = self.load_stock_prices(validated_data.get("prices", pd.DataFrame()), symbol_to_id)
+        fund_records = self.load_fundamentals(validated_data.get("fundamentals", pd.DataFrame()), symbol_to_id)
 
         self.export_processed_csv(validated_data)
 
         total_records = price_records + fund_records
         logger.info(
-            "Relational database load complete: %d records loaded into '%s'.",
-            total_records,
-            self.db.active_engine,
+            "Relational database load complete: %d companies upserted, %d prices loaded, %d fundamentals loaded.",
+            len(symbol_to_id),
+            price_records,
+            fund_records,
         )
 
         return {
-            "companies": len(symbol_to_id),
-            "prices": price_records,
-            "fundamentals": fund_records,
+            "companies_upserted": len(symbol_to_id),
+            "prices_loaded": price_records,
+            "fundamentals_loaded": fund_records,
             "total_records": total_records,
         }
 

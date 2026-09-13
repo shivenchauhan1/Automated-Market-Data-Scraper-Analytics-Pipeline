@@ -7,6 +7,7 @@ Provides cursor, commit, close methods, connection context managers, schema init
 import logging
 import os
 import sqlite3
+import time
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -45,7 +46,7 @@ class DatabaseManager:
         if env_sqlite is not None:
             self.use_sqlite = env_sqlite.strip().lower() in ("true", "1", "yes")
         else:
-            self.use_sqlite = (self.config.DB_TYPE.lower() == "sqlite")
+            self.use_sqlite = self.config.USE_SQLITE
 
         self._active_db_type = "sqlite" if self.use_sqlite else "mysql"
         self._connection = None
@@ -61,11 +62,11 @@ class DatabaseManager:
 
     def _get_mysql_connection(self):
         """Create MySQL connection using PyMySQL or mysql.connector."""
-        host = os.getenv("MYSQL_HOST", self.config.DB_HOST)
-        port = int(os.getenv("MYSQL_PORT", self.config.DB_PORT))
-        user = os.getenv("MYSQL_USER", self.config.DB_USER)
-        password = os.getenv("MYSQL_PASSWORD", self.config.DB_PASSWORD)
-        database = os.getenv("MYSQL_DATABASE", self.config.DB_NAME)
+        host = self.config.DB_HOST
+        port = self.config.DB_PORT
+        user = self.config.DB_USER
+        password = self.config.DB_PASSWORD
+        database = self.config.DB_NAME
 
         if PYMYSQL_AVAILABLE:
             return pymysql.connect(
@@ -126,7 +127,6 @@ class DatabaseManager:
                 except Exception:
                     pass
 
-    # Standard direct methods matching user specifications
     def cursor(self):
         """Create a new cursor on an active connection."""
         if self._connection is None:
@@ -172,9 +172,10 @@ class DatabaseManager:
             open_price REAL,
             high_price REAL,
             low_price REAL,
-            close_price REAL,
+            close_price REAL NOT NULL,
             change_percent REAL,
             volume INTEGER,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (company_id) REFERENCES companies(company_id) ON DELETE CASCADE,
             UNIQUE(company_id, price_date)
         );
@@ -196,15 +197,21 @@ class DatabaseManager:
         CREATE TABLE IF NOT EXISTS scraper_runs (
             run_id INTEGER PRIMARY KEY AUTOINCREMENT,
             source TEXT,
-            start_time DATETIME,
+            start_time DATETIME NOT NULL,
             end_time DATETIME,
+            duration_seconds REAL,
             records_extracted INTEGER DEFAULT 0,
+            records_transformed INTEGER DEFAULT 0,
+            records_valid INTEGER DEFAULT 0,
+            records_invalid INTEGER DEFAULT 0,
             records_loaded INTEGER DEFAULT 0,
-            status TEXT,
+            data_quality_score REAL,
+            status TEXT NOT NULL,
             error_message TEXT
         );
 
         CREATE INDEX IF NOT EXISTS idx_prices_date ON stock_prices (price_date);
+        CREATE INDEX IF NOT EXISTS idx_prices_company_date ON stock_prices (company_id, price_date);
         CREATE INDEX IF NOT EXISTS idx_companies_symbol ON companies (symbol);
         CREATE INDEX IF NOT EXISTS idx_companies_sector ON companies (sector);
         """
@@ -215,7 +222,9 @@ class DatabaseManager:
             symbol VARCHAR(20) UNIQUE NOT NULL,
             company_name VARCHAR(150) NOT NULL,
             sector VARCHAR(100),
-            industry VARCHAR(100)
+            industry VARCHAR(100),
+            INDEX idx_companies_symbol (symbol),
+            INDEX idx_companies_sector (sector)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
         CREATE TABLE IF NOT EXISTS stock_prices (
@@ -225,11 +234,14 @@ class DatabaseManager:
             open_price DECIMAL(15,2),
             high_price DECIMAL(15,2),
             low_price DECIMAL(15,2),
-            close_price DECIMAL(15,2),
+            close_price DECIMAL(15,2) NOT NULL,
             change_percent DECIMAL(8,4),
             volume BIGINT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (company_id) REFERENCES companies(company_id) ON DELETE CASCADE,
-            UNIQUE KEY unique_price (company_id, price_date)
+            UNIQUE KEY unique_price (company_id, price_date),
+            INDEX idx_prices_date (price_date),
+            INDEX idx_company_date (company_id, price_date)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
         CREATE TABLE IF NOT EXISTS fundamentals (
@@ -243,18 +255,26 @@ class DatabaseManager:
             debt DECIMAL(20,2),
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (company_id) REFERENCES companies(company_id) ON DELETE CASCADE,
-            UNIQUE KEY unique_fundamental (company_id, updated_at)
+            UNIQUE KEY unique_fundamental (company_id, updated_at),
+            INDEX idx_fund_updated (updated_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
         CREATE TABLE IF NOT EXISTS scraper_runs (
             run_id BIGINT AUTO_INCREMENT PRIMARY KEY,
             source VARCHAR(100),
-            start_time DATETIME,
+            start_time DATETIME NOT NULL,
             end_time DATETIME,
+            duration_seconds DECIMAL(8,2),
             records_extracted INT DEFAULT 0,
+            records_transformed INT DEFAULT 0,
+            records_valid INT DEFAULT 0,
+            records_invalid INT DEFAULT 0,
             records_loaded INT DEFAULT 0,
-            status VARCHAR(30),
-            error_message TEXT
+            data_quality_score DECIMAL(5,2),
+            status VARCHAR(30) NOT NULL,
+            error_message TEXT,
+            INDEX idx_runs_start (start_time),
+            INDEX idx_runs_status (status)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         """
 
@@ -262,6 +282,22 @@ class DatabaseManager:
             cursor = conn.cursor()
             if self._active_db_type == "sqlite":
                 cursor.executescript(sqlite_ddl)
+                # Auto-migrate any missing columns on preexisting SQLite tables
+                try:
+                    cursor.execute("PRAGMA table_info(scraper_runs)")
+                    existing_cols = [row[1] for row in cursor.fetchall()]
+                    cols_to_add = [
+                        ("duration_seconds", "REAL"),
+                        ("records_transformed", "INTEGER DEFAULT 0"),
+                        ("records_valid", "INTEGER DEFAULT 0"),
+                        ("records_invalid", "INTEGER DEFAULT 0"),
+                        ("data_quality_score", "REAL"),
+                    ]
+                    for col_name, col_type in cols_to_add:
+                        if col_name not in existing_cols:
+                            cursor.execute(f"ALTER TABLE scraper_runs ADD COLUMN {col_name} {col_type}")
+                except Exception as mig_err:
+                    logger.debug("SQLite column migration check: %s", mig_err)
             else:
                 for statement in mysql_ddl.split(";"):
                     stmt = statement.strip()
@@ -311,8 +347,13 @@ class DatabaseManager:
     def finish_pipeline_run(
         self,
         run_id: int,
-        records_extracted: int,
-        records_loaded: int,
+        records_extracted: int = 0,
+        records_transformed: int = 0,
+        records_valid: int = 0,
+        records_invalid: int = 0,
+        records_loaded: int = 0,
+        data_quality_score: Optional[float] = None,
+        duration_seconds: Optional[float] = None,
         status: str = "SUCCESS",
         error_message: Optional[str] = None,
     ) -> None:
@@ -324,15 +365,32 @@ class DatabaseManager:
             query = f"""
                 UPDATE scraper_runs
                 SET end_time = {param_placeholder},
+                    duration_seconds = {param_placeholder},
                     records_extracted = {param_placeholder},
+                    records_transformed = {param_placeholder},
+                    records_valid = {param_placeholder},
+                    records_invalid = {param_placeholder},
                     records_loaded = {param_placeholder},
+                    data_quality_score = {param_placeholder},
                     status = {param_placeholder},
                     error_message = {param_placeholder}
                 WHERE run_id = {param_placeholder}
             """
             cursor.execute(
                 query,
-                (now_iso, records_extracted, records_loaded, status, error_message, run_id),
+                (
+                    now_iso,
+                    duration_seconds,
+                    records_extracted,
+                    records_transformed,
+                    records_valid,
+                    records_invalid,
+                    records_loaded,
+                    data_quality_score,
+                    status,
+                    error_message,
+                    run_id,
+                ),
             )
             conn.commit()
 
